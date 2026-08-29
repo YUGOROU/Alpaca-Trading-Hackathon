@@ -17,31 +17,58 @@ Each decision uses forced non-streaming calls in the fixed order
 `get_decision_context` then `submit_decision`. The harness, rather than a
 model, generates the decision identifier.
 
+## Evidence basis
+
+The reproducible evidence committed in this PR is the 30-call protocol
+qualification per candidate (10 Direct Provider forced-tool probes + 20 DSH
+decision-loop probes), recorded in:
+
+- `results/qualification-glm-5.3-2026-08-29.json`
+- `results/qualification-dsv4-pro-2026-08-29.json`
+- `results/qualification-dsv4-flash-2026-08-29.json`
+
+These are the transport-level records that back the candidate decision. An
+earlier aggregate report of a decision-quality score (0.8125) is **not**
+commit-ready: its per-run trace was not retained, and an independent
+model-native Stage-A rerun of the eight fixtures reached `schema_validity = 1.0`
+but does not reproduce that specific aggregate (see Qualification section).
+
 ## Verified Local Contract
 
-- DSH tests: 19 passed.
+- DSH tests: 20 passed (includes model-native adapter unit tests).
 - Fixture replay E2E: 3 regimes passed.
-- Python evaluation tests: 5 passed.
+- Python evaluation tests: 5 passed; full suite 74 passed.
 - Static checks: Python compilation and `git diff --check` passed.
 
 ## Remote Fixture Results
 
-Stage A contains one run across eight fixed fixture contexts. It is a hard
-gate: every row must be schema-valid, timely, and free of unsafe approval.
-Only Stage-A survivors run Stage B, which repeats each fixture three times.
-The P50 and P95 values are end-to-end milliseconds.
+The hard, reproducible evidence for candidate selection is the 30-call
+transport qualification (10 Direct + 20 DSH per candidate), recorded in the
+committed `results/qualification-*.json` files:
 
-| Candidate | Stage-A hard gate | Stage-B runs | Decision quality | Schema validity | P50 / P95 ms | Observation |
-| --- | --- | ---: | ---: | ---: | --- | --- |
-| `moonshotai/Kimi-K3:baseten` | Failed | 0 | 0.7500 | 0.8750 | 12035 / 29588 | One unsafe calm approval and one per-case timeout. |
-| `deepseek-ai/DeepSeek-V4-Pro-0813:baseten` | Failed | 0 | 0.7500 | 0.8750 | 5176 / 5626 | One unsafe calm approval and one schema-invalid submission. |
-| `deepseek-ai/DeepSeek-V4-Flash-0731:baseten` | Failed | 0 | 0.2812 | 0.7500 | 6741 / 7398 | One unsafe calm approval and two schema-invalid submissions. |
-| `zai-org/GLM-5.3:baseten` | Passed | 24 | 0.8125 | 1.0000 | 6826 / 8688 | All Stage-A and Stage-B rows were schema-valid, safe, and timely. |
-| `zai-org/GLM-5.3-Flash:baseten` | Passed | 24 | 0.4688 | 0.5833 | 4315 / 5173 | Stage B included unsafe selections and HTTP 429 provider-rate-limit responses. |
+| Candidate | Qualification | Direct (10) | DSH transport (20) | Direct / DSH schema-invalid | timeout |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `zai-org/GLM-5.3:baseten` | **Passed** | 10 / 10 | 20 / 20 | 0 / 0 | 0 |
+| `deepseek-ai/DeepSeek-V4-Pro-0813:baseten` | Failed | 0 / 10 | 18 / 20 | 10 / 2 | 0 |
+| `deepseek-ai/DeepSeek-V4-Flash-0731:baseten` | Failed | 9 / 10 | 16 / 20 | 1 / 4 | 0 |
 
-The current evidence identifies `zai-org/GLM-5.3:baseten` as the sole clean
-candidate in this fixture run. This is evaluation evidence only: it does not
-set `HF_MODEL_ID`, alter a Modal Secret, or deploy the persistent heartbeat.
+Interpretation: `zai-org/GLM-5.3:baseten` is the only candidate whose transport
+layer is stable across all 30 calls (every direct probe and DSH decision loop
+was schema-valid and timely). Both DeepSeek candidates fail qualification on
+transport grounds — the model-native DSML normalization is not stable, emitting
+a malformed schema for the empty-argument `get_decision_context` call at a
+non-deterministic rate. This is a model-output instability, not a parse or
+timeout artifact.
+
+**Transport qualification is not a decision-quality pass.** An independent
+model-native Stage-A rerun of the eight fixtures (kept local, not a committed
+deployment record) reached `schema_validity = 1.0` but failed the decision
+quality hard gate on two unambiguous fixtures (`calm_clear` and
+`elevated_clear`), so Stage-B did not run in that trace. Decision quality,
+including the earlier unretained 0.8125 aggregate, is **deliberately deferred**
+by the owner (see Decision-quality deferral) and is not claimed by this PR.
+This document and the committed `results/qualification-*` JSONs therefore do
+**not** record an unsafe-approval-free decision-quality pass.
 
 ## Failure Taxonomy
 
@@ -55,8 +82,18 @@ model decision-quality failures.
 
 ## Remaining Qualification Boundary
 
-The current qualification protocol uses 10 Direct Provider forced-tool probes
-and 20 DSH decision-loop probes for each selected candidate. The fixture
-evaluations above validate the full DSH decision path, but do not replace that
-dedicated transport protocol. Do not treat the table as a deployment
-authorization until the qualification result has been recorded.
+This PR qualifies `zai-org/GLM-5.3:baseten` on **transport** grounds only (30/30
+probes clean). It does not claim a decision-quality or safety pass: the
+independent Stage-A rerun showed the decision-quality hard gate is not
+reproducibly passed, and the earlier 0.8125 aggregate is not committed because
+its per-run trace was not retained. A deployment built on this PR should be
+treated as transport-qualified but decision-quality-open.
+
+## Decision-quality deferral
+
+The decision-quality gate (oracle agreement, unsafe-approval freedom, and the
+earlier unreproduced 0.8125 aggregate) is deliberately **deferred** by the
+owner and is out of scope for this PR. This PR therefore records the transport
+qualification only. A follow-up must either reproduce decision-quality evidence
+or formally adopt a lower decision-quality bar before the heartbeat is relied
+upon for autonomous behavior.
