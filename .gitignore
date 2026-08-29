@@ -1,0 +1,39 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+secrets.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# Node / DSH local install
+node_modules/
+
+# Local data / logs (thesis log committed explicitly if desired)
+*.log
+*.sqlite
+*.db
+.agent/
+.dsh/
+agent/dsh/tests/replay/.generated.override.json
+
+# Runtime agent state — local only. Persisted on disk between runs (and on a Modal
+# Volume in the always-on deploy); never in git, so a stale committed peak_equity can't
+# bleed into a live account and fake a drawdown. The old cron that force-committed it is
+# archived.
+state/*.json
+state/*.jsonl
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

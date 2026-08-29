@@ -1,0 +1,51 @@
+name: agent
+
+# Runs one agent cycle on a schedule during ~US market hours, and persists state back.
+# NOTE: scheduled workflows only fire on the DEFAULT branch (main) — this activates once
+# merged. Test on a branch with the "Run workflow" button (workflow_dispatch) or locally
+# via `python scripts/run_agent.py`.
+on:
+  schedule:
+    - cron: "*/30 13-21 * * 1-5"   # every 30 min, ~13:00-21:00 UTC, Mon-Fri (covers US DST)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # to commit the updated state.json back
+
+concurrency:
+  group: agent-cycle
+  cancel-in-progress: false   # never interrupt a cycle mid-flight
+
+jobs:
+  cycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run one agent cycle
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          ALPACA_PAPER: "true"
+        run: python scripts/run_agent.py
+
+      - name: Persist state.json
+        if: always()
+        run: |
+          git config user.name "alpaca-agent-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add -f state/state.json state/ledger.jsonl   # -f: they're gitignored locally
+          if git diff --staged --quiet; then
+            echo "no state change to commit"
+          else
+            git commit -m "chore: update agent state [skip ci]"
+            git push
+          fi

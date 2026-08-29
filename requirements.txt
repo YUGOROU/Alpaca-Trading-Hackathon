@@ -1,0 +1,11 @@
+# Env loading for local runs (containers/CI pass env directly)
+python-dotenv
+
+# Alpaca market data + paper trading (feed/alpaca.py)
+alpaca-py
+
+# NOTE: langchain / langgraph removed — the model brain and MCP connection live in the
+# DSH harness now, not in this repo. The retired langchain LLM client (model/) and MCP
+# executor (harness/mcp_executor.py) are preserved under _archive/ if ever needed.
+
+# Pin exact versions after the first clean install:  pip freeze > requirements.lock

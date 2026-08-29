@@ -1,0 +1,16 @@
+.git/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+state/
+tests/
+.pytest_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/

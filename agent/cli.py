@@ -1,0 +1,75 @@
+"""JSON-only bridge used by the DSH bundle.
+
+Two provenance modes, same JSON contract:
+  * `--scenario <name>` — fixed fixtures (offline/replay/tests). Deterministic, so
+    `submit` safely rebuilds the same context.
+  * `--live`            — a real `feed.observe(...)` snapshot. Because live data moves
+    between the `context` and `submit` calls, `context` persists its inputs and `submit`
+    rebuilds from them (see agent/live_context.py) so the gate's context_id check holds.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+
+from .candidates import build_decision_context
+from .contracts import AgentDecision
+from .gate import validate_decision
+from .ledger import record_dry_run
+from .live_context import build_live_context, rebuild_live_context
+from .scenarios import get_scenario
+
+
+def _add_mode(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--scenario", help="fixed fixture name (offline/replay)")
+    group.add_argument("--live", action="store_true", help="observe live Alpaca data")
+
+
+def _scenario_context(scenario: str):
+    portfolio, market = get_scenario(scenario)
+    return build_decision_context(portfolio, market, scenario_id=scenario)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    context_parser = sub.add_parser("context")
+    _add_mode(context_parser)
+
+    submit_parser = sub.add_parser("submit")
+    _add_mode(submit_parser)
+    submit_parser.add_argument("--context-id", required=True)
+    submit_parser.add_argument("--candidate-id", required=True)
+    submit_parser.add_argument("--reason", required=True)
+    submit_parser.add_argument("--decision-id", required=True)
+    submit_parser.add_argument("--ledger", required=True)
+
+    args = parser.parse_args()
+    scenario_id = "live" if args.live else args.scenario
+
+    if args.command == "context":
+        context = build_live_context() if args.live else _scenario_context(args.scenario)
+        print(json.dumps(context.to_model_dict(), sort_keys=True))
+        return 0
+
+    # submit: rebuild the exact context the model chose from, then validate.
+    if args.live:
+        context = rebuild_live_context(args.context_id)
+    else:
+        context = _scenario_context(args.scenario)
+
+    decision = AgentDecision(args.context_id, args.candidate_id, args.reason)
+    if context is None:
+        # Unknown/expired live context id — fail closed via the normal gate path.
+        context = build_live_context(persist=False)
+    result = validate_decision(context, decision)
+    row = record_dry_run(args.ledger, args.decision_id, scenario_id, decision, result)
+    print(json.dumps(row, sort_keys=True))
+    return 0 if result.approved else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

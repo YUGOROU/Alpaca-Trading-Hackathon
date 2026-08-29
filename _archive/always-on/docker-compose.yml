@@ -1,0 +1,30 @@
+# Agent loop + live UI, sharing one persistent state volume (README §6).
+#   cp .env.example .env   # fill in ALPACA_* + your LLM key
+#   docker compose up --build
+# UI at http://localhost:8787 ; both services share state + the trade ledger.
+services:
+  agent:
+    build: .
+    env_file: [.env]
+    environment:
+      - LOOP_INTERVAL_SECONDS=1800   # one cycle every 30 min
+      - AGENT_STATE_PATH=/data/state.json
+      - AGENT_LEDGER_PATH=/data/ledger.jsonl
+    volumes: [agentdata:/data]
+    command: python loop.py
+    restart: unless-stopped
+
+  webui:
+    build: .
+    env_file: [.env]
+    environment:
+      - WEBUI_HOST=0.0.0.0
+      - AGENT_STATE_PATH=/data/state.json
+      - AGENT_LEDGER_PATH=/data/ledger.jsonl
+    volumes: [agentdata:/data]
+    ports: ["8787:8787"]
+    command: python run_webui.py
+    restart: unless-stopped
+
+volumes:
+  agentdata:

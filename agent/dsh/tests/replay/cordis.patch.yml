@@ -1,0 +1,19 @@
+- id: llm-deepseek
+  disabled: true
+
+- id: llm-pi-ai
+  disabled: true
+
+- insert:
+    - id: llm-replay
+      name: '@deepseek-ai/dsh-llm-replay'
+      config:
+        file: './tests/replay/session.jsonl'
+        overrideFile: './tests/replay/.generated.override.json'
+        providers:
+          - id: deepseek-official
+            name: DeepSeek replay
+            models:
+              - id: deepseek-v4-flash
+                contextWindow: 128000
+                inputModalities: [text]
