@@ -29,7 +29,7 @@ from .metrics import variance_risk_premium
 from .types import MarketData, Portfolio, RiskSnapshot
 
 # --- Tunable knobs (calibrated on the dev account, kept simple for the MVP) ---
-DEFAULT_EXPIRY_DAYS = 5       # ~1-week expiries that decay AND expire inside a 5-day window
+DEFAULT_EXPIRY_DAYS = 4       # expire at the 4-day window close; full premium held to expiry
 TARGET_CALL_DELTA = 0.30      # sell ~30-delta calls (OTM, ~70% chance kept)
 TARGET_PUT_DELTA = 0.30       # sell ~30-delta puts
 SPREAD_WIDTH_PCT = 0.03       # each spread's width as a fraction of spot (defined risk)
