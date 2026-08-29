@@ -31,6 +31,7 @@ image = (
         ],
     )
     .run_commands(
+        "npm install --global pnpm@10",
         "cd /app/agent/dsh && npm ci",
         "python -m pip install --no-cache-dir -r /app/requirements.txt",
     )
@@ -48,8 +49,8 @@ evaluation_results = modal.Dict.from_name(RESULTS_DICT_NAME, create_if_missing=T
     timeout=1800,
     secrets=[hf_token_secret],
 )
-def evaluate_model(model_id: str, result_key: str) -> dict[str, object]:
-    """Run the fixed hard-gate and quality protocol without Alpaca access."""
+def evaluate_model(model_id: str, result_key: str, qualification_only: bool = False) -> dict[str, object]:
+    """Run sanitized protocol qualification or fixture evaluation without Alpaca access."""
     if not model_id.strip():
         raise ValueError("model_id must not be empty")
     if not result_key.strip():
@@ -57,12 +58,15 @@ def evaluate_model(model_id: str, result_key: str) -> dict[str, object]:
 
     with tempfile.TemporaryDirectory(prefix="liquidity-leak-model-eval-") as root:
         result_path = Path(root) / "result.json"
+        command = [
+            "python", "/app/scripts/run_deployment_model_evaluation.py",
+            "--model", model_id,
+            "--output", str(result_path),
+        ]
+        if qualification_only:
+            command.append("--qualification-only")
         completed = subprocess.run(
-            [
-                "python", "/app/scripts/run_deployment_model_evaluation.py",
-                "--model", model_id,
-                "--output", str(result_path),
-            ],
+            command,
             cwd="/app",
             capture_output=True,
             text=True,

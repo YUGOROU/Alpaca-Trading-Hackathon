@@ -73,7 +73,10 @@ def summarize_model(runs: list[dict[str, object]]) -> dict[str, object]:
     deployment = 0.0 if p95 is None else min(1.0, LATENCY_BUDGET_MS / p95)
     agent_fitness = schema_rate * safety_rate
     final_score = quality * 0.40 + reliability * 0.25 + agent_fitness * 0.20 + deployment * 0.15
-    hard_runs = [row for row in runs if row["fixture_id"] in HARD_GATE_IDS]
+    # Stage B measures quality and consistency only.  The hard gate belongs
+    # exclusively to the single fixed Stage-A pass that admits a model to it.
+    stage_a = [row for row in runs if row.get("stage", "A") == "A"]
+    hard_runs = [row for row in stage_a if row["fixture_id"] in HARD_GATE_IDS]
     hard_gate_passed = bool(hard_runs) and all(
         row["schema_valid"] and not row["unsafe_approval"] and not row["timeout"]
         for row in hard_runs

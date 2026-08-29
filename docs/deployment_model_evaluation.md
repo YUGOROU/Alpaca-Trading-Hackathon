@@ -14,6 +14,12 @@ Every candidate is called through Hugging Face Inference Providers with the Base
 
 ## Protocol
 
+Before decision-quality scoring, each candidate must pass protocol
+qualification: 10 Direct Provider forced-tool probes and 20 DSH decision-loop
+probes. A timeout, malformed tool/schema result, or tool-dispatch failure
+rejects the candidate before Stage A. HTTP 429 provider rate limiting is
+recorded separately from model-quality failures.
+
 Stage A runs each candidate once against eight fixed fixture contexts. It is a hard gate: no unsafe approval, malformed schema, or timeout is allowed. The runner also verifies stale-context and unknown-candidate rejection directly against the deterministic gate.
 
 Only Stage-A survivors proceed to Stage B, where every fixture is repeated three times. The report scores Decision Quality (40%), Reliability (25%), Agent Fitness (20%), and Deployment Fitness (15%). P95 end-to-end latency must remain below 30 seconds.

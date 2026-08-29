@@ -3,13 +3,18 @@ import Schema from '@deepseek-ai/schemastery'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { runModelNativeDecision } from './model-native-adapter.js'
 
 export const name = 'portfolio-heartbeat'
 export const inject = ['agentDefaultModel', 'agents', 'sessions']
 
 export const Config = Schema.object({
+  repositoryRoot: Schema.string().required(),
   scenario: Schema.string(),
   live: Schema.boolean().default(false),
+  ledgerPath: Schema.string().required(),
+  pythonExecutable: Schema.string().default('python3'),
+  placeOrders: Schema.boolean().default(false),
   heartbeat: Schema.boolean().default(false), // only loop when heartbeat mode is selected
   instruction: Schema.string().required(),
   intervalMs: Schema.number().default(1_800_000), // 30 min — matches the retired cron cadence
@@ -45,6 +50,12 @@ function turnOutcome(events, firstSeq) {
 }
 
 async function runOneCycle(ctx, config) {
+  if (process.env.HF_MODEL_ID) {
+    const result = await runModelNativeDecision(config)
+    return result.status === 'completed' ? { kind: 'completed' } : {
+      kind: 'error', error: { code: result.failure, message: 'model-native tool calling failed' },
+    }
+  }
   const selection = ctx.agentDefaultModel.currentSelection()
   const { agent } = await ctx.agents.create({
     sessionId: SessionId(`portfolio-heartbeat-${randomUUID()}`),

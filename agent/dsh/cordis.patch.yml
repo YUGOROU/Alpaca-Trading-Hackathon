@@ -124,7 +124,12 @@
       name: alpaca-portfolio-dsh/runner
       inject: [portfolioStartup]
       config:
+        repositoryRoot: !!js ctx.portfolioStartup.repositoryRoot
         scenario: !!js ctx.portfolioStartup.scenario
+        live: !!js ctx.portfolioStartup.live
+        ledgerPath: !!js ctx.portfolioStartup.ledgerPath
+        pythonExecutable: python3
+        placeOrders: !!js ctx.portfolioStartup.placeOrders
         instruction: !!js ctx.portfolioStartup.instruction
         heartbeat: !!js ctx.portfolioStartup.heartbeat
 
@@ -132,8 +137,12 @@
       name: alpaca-portfolio-dsh/heartbeat
       inject: [portfolioStartup]
       config:
+        repositoryRoot: !!js ctx.portfolioStartup.repositoryRoot
         scenario: !!js ctx.portfolioStartup.scenario
         live: !!js ctx.portfolioStartup.live
+        ledgerPath: !!js ctx.portfolioStartup.ledgerPath
+        pythonExecutable: python3
+        placeOrders: !!js ctx.portfolioStartup.placeOrders
         heartbeat: !!js ctx.portfolioStartup.heartbeat
         instruction: !!js ctx.portfolioStartup.instruction
         intervalMs: !!js ctx.portfolioStartup.intervalMs

@@ -8,13 +8,16 @@
     ".": "./index.js",
     "./runner": "./runner.js",
     "./heartbeat": "./heartbeat.js",
-    "./startup": "./startup.js"
+    "./startup": "./startup.js",
+    "./model-native-adapter": "./model-native-adapter.js"
   },
   "files": [
     "index.js",
     "runner.js",
     "heartbeat.js",
     "startup.js",
+    "decision-bridge.js",
+    "model-native-adapter.js",
     "alpaca-orders.js",
     "alpaca-readonly.js",
     "cordis.patch.yml"

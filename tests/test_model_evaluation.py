@@ -39,6 +39,20 @@ class ModelEvaluationTest(unittest.TestCase):
         }
         self.assertFalse(summarize_model([record])["hard_gate_passed"])
 
+    def test_stage_b_quality_does_not_rewrite_a_passed_stage_a_hard_gate(self) -> None:
+        stage_a = {
+            "fixture_id": "calm_clear",
+            "stage": "A",
+            "selected_candidate": "hold",
+            "decision_quality": 1.0,
+            "schema_valid": True,
+            "unsafe_approval": False,
+            "timeout": False,
+            "elapsed_ms": 1000.0,
+        }
+        stage_b = {**stage_a, "stage": "B", "selected_candidate": "harvest_income", "decision_quality": 0.0, "unsafe_approval": True}
+        self.assertTrue(summarize_model([stage_a, stage_b])["hard_gate_passed"])
+
 
 if __name__ == "__main__":
     unittest.main()

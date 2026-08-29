@@ -21,6 +21,12 @@ VOLUME_NAME = "liquidity-leak-dsh-state"
 MODEL_SECRET_NAME = "huggingface"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTRUCTION = "Protect the paper portfolio using only admissible candidates."
+# HF_MODEL_ID is configuration, not a credential. It is injected into the
+# server container as a plain (non-secret) environment variable so the
+# credentials Secret ("huggingface") keeps only HF_TOKEN. It may be overridden
+# at deploy time by setting HF_MODEL_ID in the calling environment.
+DEFAULT_MODEL_ID = "zai-org/GLM-5.3:baseten"
+MODEL_ID = os.environ.get("HF_MODEL_ID") or DEFAULT_MODEL_ID
 
 image = (
     modal.Image.from_registry("node:22-bookworm", add_python="3.12")
@@ -46,6 +52,7 @@ image = (
         ],
     )
     .run_commands(
+        "npm install --global pnpm@10",  # dsh uses pnpm to manage profile plugins
         "cd /app/agent/dsh && npm ci",
         "python -m pip install --no-cache-dir -r /app/requirements.txt",
     )
@@ -54,10 +61,6 @@ image = (
 app = modal.App(APP_NAME)
 state_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 hf_token_secret = modal.Secret.from_name(MODEL_SECRET_NAME, required_keys=["HF_TOKEN"])
-selected_model_secret = modal.Secret.from_name(
-    MODEL_SECRET_NAME,
-    required_keys=["HF_TOKEN", "HF_MODEL_ID"],
-)
 
 
 @app.server(
@@ -68,14 +71,19 @@ selected_model_secret = modal.Secret.from_name(
     min_containers=1,
     max_containers=1,
     volumes={"/data": state_volume},
-    secrets=[selected_model_secret],
+    secrets=[hf_token_secret],
+    # HF_MODEL_ID is injected as non-secret config (not part of the
+    # credentials Secret). startup.sh and the heartbeat require it as an env var.
+    env={"HF_MODEL_ID": MODEL_ID},
 )
 class HeartbeatServer:
     """Always-on CPU container whose entrypoint owns the DSH heartbeat process."""
 
     @modal.enter()
     def start(self) -> None:
-        # HF_TOKEN and the already-evaluated HF_MODEL_ID are injected by Modal;
+        # HF_TOKEN is injected by the credentials Secret; HF_MODEL_ID is
+        # injected as non-secret config via the server env. Both are present in
+        # the container environment that the heartbeat process inherits.
         # Alpaca credentials are never mounted here.
         os.environ.setdefault("HEARTBEAT_INSTRUCTION", DEFAULT_INSTRUCTION)
         os.environ.setdefault("HEARTBEAT_INTERVAL_MS", "1800000")

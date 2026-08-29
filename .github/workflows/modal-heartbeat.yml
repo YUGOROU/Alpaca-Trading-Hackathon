@@ -3,6 +3,11 @@ name: Deploy Modal DSH heartbeat
 on:
   workflow_dispatch:
     inputs:
+      hf_model_id:
+        description: "HF_MODEL_ID to inject as server config (default: zai-org/GLM-5.3:baseten)"
+        required: false
+        type: string
+        default: "zai-org/GLM-5.3:baseten"
 
 permissions:
   contents: read
@@ -13,6 +18,7 @@ jobs:
     env:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+      HF_MODEL_ID: ${{ inputs.hf_model_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

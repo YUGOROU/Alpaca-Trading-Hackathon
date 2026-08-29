@@ -37,7 +37,6 @@ for (const [scenario, candidateId] of Object.entries(selections)) {
   ))
   const contextId = context.context_id
   assert.ok(context.candidates.some(candidate => candidate.candidate_id === candidateId))
-  const decisionId = `replay-${scenario}`
   const override = [
     {
       kind: 'chunks',
@@ -52,8 +51,8 @@ for (const [scenario, candidateId] of Object.entries(selections)) {
       kind: 'chunks',
       chunks: [
         { type: 'block-start', index: 0, blockType: 'tool-call' },
-        { type: 'tool-call-delta', index: 0, id: `${scenario}-submit`, name: 'submit_decision', argumentsDelta: JSON.stringify({ context_id: contextId, candidate_id: candidateId, reason: `Replay selection for ${scenario}.`, decision_id: decisionId }) },
-        { type: 'block-end', index: 0, block: { type: 'tool-call', id: `${scenario}-submit`, name: 'submit_decision', arguments: JSON.stringify({ context_id: contextId, candidate_id: candidateId, reason: `Replay selection for ${scenario}.`, decision_id: decisionId }) } },
+        { type: 'tool-call-delta', index: 0, id: `${scenario}-submit`, name: 'submit_decision', argumentsDelta: JSON.stringify({ context_id: contextId, candidate_id: candidateId, reason: `Replay selection for ${scenario}.` }) },
+        { type: 'block-end', index: 0, block: { type: 'tool-call', id: `${scenario}-submit`, name: 'submit_decision', arguments: JSON.stringify({ context_id: contextId, candidate_id: candidateId, reason: `Replay selection for ${scenario}.` }) } },
         { type: 'finish', reason: { kind: 'tool-calls' } },
       ],
     },
