@@ -53,7 +53,7 @@ def _scale_leg(leg: IncomeLeg, factor: float) -> IncomeLeg | None:
 def _rebuild_income(src: IncomePlan, legs: list[IncomeLeg]) -> IncomePlan:
     """Recompute an IncomePlan's totals from a (clamped) list of legs."""
     total_credit = sum(l.credit for l in legs)
-    expiry = legs[0].expiry_days if legs else 7
+    expiry = legs[0].expiry_days if legs else 4
     equity_est = (
         (src.total_credit / src.annualized_yield) * (365.0 / expiry)
         if src.annualized_yield else 0.0

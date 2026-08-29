@@ -195,7 +195,7 @@ def build_live_context(
     source=None,
     state=None,
     index_symbol: str = "SPY",
-    expiry_days: int = 5,
+    expiry_days: int = 4,
     current_contracts: int | None = None,
     persist: bool = True,
 ) -> DecisionContext:

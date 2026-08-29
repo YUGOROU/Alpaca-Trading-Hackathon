@@ -102,7 +102,7 @@ def _hedge_to_intent(hedge: dict, index_symbol: str) -> OrderIntent | None:
         structure="protective_put",
         symbol=index_symbol,
         contracts=abs(delta),
-        expiry_days=hedge.get("put_expiry_days", 14),
+        expiry_days=hedge.get("put_expiry_days", 4),
         net_side="debit",
         legs=(OptionLeg("P", hedge["put_strike"], action),),
         note="tail hedge",

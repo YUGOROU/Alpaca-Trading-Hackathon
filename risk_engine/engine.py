@@ -54,15 +54,15 @@ def plan_hedge(
     market: MarketData,
     snapshot: RiskSnapshot,
     current_contracts: int = 0,
-    expiry_days: int = 7,
+    expiry_days: int = 4,
     target_put_delta: float = 0.35,
     strike_pct_otm: float | None = None,
 ) -> HedgePlan:
     """Size a protective-put hedge to reach the snapshot's target coverage.
 
-    Tuned for a short window: buys a *responsive* ~`target_put_delta` put (not a deep-OTM
-    tail lottery that barely moves in 5 days) at a short `expiry_days` (less time-value
-    drag, still alive across the window). Pass `strike_pct_otm` (e.g. 0.05) to fix a
+    Tuned for a 4-day window: buys a *responsive* ~`target_put_delta` put (not a deep-OTM
+    tail lottery that barely moves in a few days) at a short `expiry_days` (less time-value
+    drag, still alive to the window close). Pass `strike_pct_otm` (e.g. 0.05) to fix a
     %-OTM strike instead (§7.3, §7.6).
     """
     S = market.index_price
@@ -171,13 +171,14 @@ def plan_strategy(
     market: MarketData,
     snapshot: RiskSnapshot,
     current_contracts: int = 0,
-    income_dte: int = 5,
-    hedge_dte: int = 7,
+    income_dte: int = 4,
+    hedge_dte: int = 4,
 ) -> StrategyPlan:
     """Combine the income overlay and the hedge overlay into one decision (§3, §7).
 
-    Income sells weekly (`income_dte`) to harvest fast time decay; the hedge uses a
-    longer-dated put (`hedge_dte`) so protection stays alive across the window.
+    Both overlays expire at the 4-day window close: income (`income_dte`) harvests the
+    full premium held to one clean expiry, and the hedge (`hedge_dte`) stays alive across
+    the whole window. A single expiry keeps gamma/transaction cost down vs. re-rolling.
     """
     income = plan_income(portfolio, market, snapshot, expiry_days=income_dte)
     hedge = plan_hedge(

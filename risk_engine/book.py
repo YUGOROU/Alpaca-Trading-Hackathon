@@ -31,28 +31,22 @@ class BookEntry:
 
 
 # Default core book — liquid, optionable US names (tight quotes -> clean paper fills,
-# §7.13). Diversified across market / size / sector so no single position dominates the
-# P&L, yet every holding stays highly correlated to SPY, so the SPY put hedge actually
-# covers the book (low basis risk) instead of leaving concentrated single-name gaps.
-# ETFs carry ~two-thirds of the weight (hundreds of underlying names) spread across
-# seven sectors (market, tech, small-cap, industrials, healthcare, financials, energy)
-# so no one sector dominates; the three mega-cap singles are a small "we hold real
-# stocks" sleeve, with the high-beta name (NVDA) kept to a controlled ~3% momentum tilt
-# so its volatility can't drive short-window variance. Equity weights sum to 0.80; the
-# remaining 0.20 is the cash sleeve (dry powder for premium + margin, and a smaller net-
-# long footprint keeps a quiet week's directional noise down). Betas are config
-# estimates, refined later from live returns (feed.compute_beta).
+# §7.13). Diversified across market / size so no single position dominates the P&L, yet
+# every holding stays highly correlated to SPY, so the SPY put hedge actually covers the
+# book (low basis risk) instead of leaving concentrated single-name gaps. Four broad-index
+# ETFs carry the core (market, tech, small-cap, large-cap/industrials — thousands of
+# underlying names) at ~0.74 of equity; two mega-cap singles are a small "we hold real
+# stocks" sleeve at ~0.06, kept low so single-name gaps can't drive short-window variance.
+# Equity weights sum to 0.80; the remaining 0.20 is the cash sleeve (dry powder for premium
+# + margin, and a smaller net-long footprint keeps a quiet week's directional noise down).
+# Betas are config estimates, refined later from live returns (feed.compute_beta).
 DEFAULT_BOOK: list[BookEntry] = [
-    BookEntry("SPY", 0.24, 1.00),   # broad-market core (500 names)
-    BookEntry("QQQ", 0.11, 1.10),   # tech / growth tilt (100 names)
-    BookEntry("IWM", 0.10, 1.15),   # small-cap breadth (2000 names)
-    BookEntry("DIA", 0.09, 0.95),   # large-cap value / industrials (30 names)
-    BookEntry("XLV", 0.08, 0.80),   # healthcare sector — defensive diversifier
-    BookEntry("XLF", 0.07, 1.10),   # financials sector
-    BookEntry("XLE", 0.04, 0.90),   # energy sector — low SPY correlation, real diversifier
-    BookEntry("AAPL", 0.02, 1.15),
-    BookEntry("MSFT", 0.02, 1.10),
-    BookEntry("NVDA", 0.03, 1.60),  # controlled momentum sleeve (high beta, kept small)
+    BookEntry("SPY", 0.33, 1.00),   # broad-market core (500 names)
+    BookEntry("QQQ", 0.15, 1.10),   # tech / growth tilt (100 names)
+    BookEntry("IWM", 0.14, 1.15),   # small-cap breadth (2000 names)
+    BookEntry("DIA", 0.12, 0.95),   # large-cap value / industrials (30 names)
+    BookEntry("AAPL", 0.03, 1.15),  # mega-cap single — small "real stocks" sleeve
+    BookEntry("MSFT", 0.03, 1.10),  # mega-cap single — small "real stocks" sleeve
 ]
 
 
