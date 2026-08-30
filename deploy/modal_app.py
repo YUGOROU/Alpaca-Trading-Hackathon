@@ -1,8 +1,8 @@
 """Modal entrypoint for the paper-only DSH portfolio heartbeat.
 
-This app deliberately has no Alpaca credential secret.  It can build and run the
-fixture/replay path, but a real Alpaca account cannot be contacted or traded from
-this deployment until a separate, reviewed change introduces that capability.
+This app mounts a dedicated paper-only Alpaca Secret.  The credentials are never
+logged or exposed through HTTP, and the only writing path is the authenticated
+Human Approval executor.
 """
 
 from __future__ import annotations
@@ -19,6 +19,8 @@ import modal
 APP_NAME = "liquidity-leak-dsh-heartbeat"
 VOLUME_NAME = "liquidity-leak-dsh-state"
 MODEL_SECRET_NAME = "huggingface"
+ALPACA_PAPER_SECRET_NAME = "alpaca-paper"
+APPROVAL_SECRET_NAME = "human-approval-auth"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INSTRUCTION = "Protect the paper portfolio using only admissible candidates."
 # HF_MODEL_ID is configuration, not a credential. It is injected into the
@@ -61,6 +63,10 @@ image = (
 app = modal.App(APP_NAME)
 state_volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 hf_token_secret = modal.Secret.from_name(MODEL_SECRET_NAME, required_keys=["HF_TOKEN"])
+alpaca_paper_secret = modal.Secret.from_name(
+    ALPACA_PAPER_SECRET_NAME, required_keys=["ALPACA_API_KEY", "ALPACA_SECRET_KEY"]
+)
+approval_secret = modal.Secret.from_name(APPROVAL_SECRET_NAME, required_keys=["HUMAN_APPROVAL_TOKEN"])
 
 
 @app.server(
@@ -71,7 +77,7 @@ hf_token_secret = modal.Secret.from_name(MODEL_SECRET_NAME, required_keys=["HF_T
     min_containers=1,
     max_containers=1,
     volumes={"/data": state_volume},
-    secrets=[hf_token_secret],
+    secrets=[hf_token_secret, alpaca_paper_secret, approval_secret],
     # HF_MODEL_ID is injected as non-secret config (not part of the
     # credentials Secret). startup.sh and the heartbeat require it as an env var.
     env={"HF_MODEL_ID": MODEL_ID},
@@ -84,7 +90,8 @@ class HeartbeatServer:
         # HF_TOKEN is injected by the credentials Secret; HF_MODEL_ID is
         # injected as non-secret config via the server env. Both are present in
         # the container environment that the heartbeat process inherits.
-        # Alpaca credentials are never mounted here.
+        # The deploy workflow supplies only paper-account credentials via the
+        # dedicated Modal Secret; they are never read or logged by this code.
         os.environ.setdefault("HEARTBEAT_INSTRUCTION", DEFAULT_INSTRUCTION)
         os.environ.setdefault("HEARTBEAT_INTERVAL_MS", "1800000")
         Path("/data/state").mkdir(parents=True, exist_ok=True)

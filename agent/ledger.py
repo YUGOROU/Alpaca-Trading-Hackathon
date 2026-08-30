@@ -58,6 +58,18 @@ def record_dry_run(
     if not decision_id.strip():
         raise ValueError("decision_id is required")
     target = Path(path)
+    with _ledger_lock(target):
+        return _record_dry_run_locked(target, decision_id, scenario_id, decision, result, execution_mode)
+
+
+def _record_dry_run_locked(
+    target: Path,
+    decision_id: str,
+    scenario_id: str,
+    decision: AgentDecision,
+    result: GateResult,
+    execution_mode: str,
+) -> dict[str, Any]:
     existing = _read_rows(target)
     if existing:
         prior = next((row for row in existing if row.get("event", "proposal") == "proposal" and row["decision_id"] == decision_id), None)
@@ -127,6 +139,11 @@ def _record_human_approval_locked(target: Path, decision_id: str, *, approved_by
             return prior
         raise ValueError("decision_id already has a different approval")
 
+    decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+    latest = decision_rows[-1].get("execution") if decision_rows else None
+    if latest is None or latest.get("state") != "proposed":
+        raise ValueError("approval requires a proposed decision")
+
     row = {
         "schema_version": 2,
         "timestamp": datetime.now(UTC).isoformat(),
@@ -142,6 +159,30 @@ def _record_human_approval_locked(target: Path, decision_id: str, *, approved_by
     }
     _append_row(target, row)
     return row
+
+
+def record_human_rejection(path: str | Path, decision_id: str, *, rejected_by: str) -> dict[str, Any]:
+    """Append a terminal human rejection; rejected proposals can never be submitted."""
+    if not rejected_by.strip():
+        raise ValueError("rejected_by is required")
+    target = Path(path)
+    with _ledger_lock(target):
+        rows = _read_rows(target)
+        proposal = _proposal(rows, decision_id)
+        if proposal.get("gate", {}).get("status") != "approved_for_dry_run":
+            raise ValueError("only approved proposals may receive human rejection")
+        decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+        latest = decision_rows[-1].get("execution") if decision_rows else None
+        if latest is None or latest.get("state") != "proposed":
+            raise ValueError("rejection requires a proposed decision")
+        row = {
+            "schema_version": 2, "timestamp": datetime.now(UTC).isoformat(),
+            "event": "rejection", "decision_id": decision_id,
+            "context_id": proposal["decision"]["context_id"],
+            "execution": {"mode": "human", "state": "rejected", "approval_source": "human", "rejected_by": rejected_by},
+        }
+        _append_row(target, row)
+        return row
 
 
 def execution_state(path: str | Path, decision_id: str) -> dict[str, Any] | None:
@@ -173,9 +214,17 @@ def record_submission_requested(
 ) -> dict[str, Any]:
     """Record the last fail-closed checkpoint before a future broker call."""
     target = Path(path)
+    with _ledger_lock(target):
+        return _record_submission_requested_locked(target, decision_id, revalidation=revalidation)
+
+
+def _record_submission_requested_locked(
+    target: Path, decision_id: str, *, revalidation: dict[str, Any]
+) -> dict[str, Any]:
     rows = _read_rows(target)
     proposal = _proposal(rows, decision_id)
-    latest = execution_state(target, decision_id)
+    decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+    latest = decision_rows[-1].get("execution") if decision_rows else None
     if latest is None or latest.get("state") != "approved":
         raise ValueError("submission requires an approved decision")
     if revalidation.get("ok") is not True:
@@ -206,6 +255,35 @@ def record_submission_requested(
 BROKER_STATES = frozenset({"accepted", "partially_filled", "filled", "rejected", "canceled", "expired", "submission_failed"})
 
 
+def record_submission_failure(path: str | Path, decision_id: str, *, reason: str) -> dict[str, Any]:
+    """Record an unconfirmed submission failure without inventing a broker order id."""
+    if not reason.strip():
+        raise ValueError("reason is required")
+    target = Path(path)
+    with _ledger_lock(target):
+        rows = _read_rows(target)
+        proposal = _proposal(rows, decision_id)
+        decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+        latest = decision_rows[-1].get("execution") if decision_rows else None
+        if latest is None or latest.get("state") != "submission_requested":
+            raise ValueError("submission failure requires a submission request")
+        row = {
+            "schema_version": 2,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": "submission_failure",
+            "decision_id": decision_id,
+            "context_id": proposal["decision"]["context_id"],
+            "failure": {"reason": reason[:500]},
+            "execution": {
+                "mode": "human",
+                "state": "submission_failed",
+                "approval_source": "human",
+            },
+        }
+        _append_row(target, row)
+        return row
+
+
 def record_broker_update(
     path: str | Path, decision_id: str, *, state: str, broker_orders: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -215,9 +293,17 @@ def record_broker_update(
     if not broker_orders:
         raise ValueError("broker_orders is required")
     target = Path(path)
+    with _ledger_lock(target):
+        return _record_broker_update_locked(target, decision_id, state=state, broker_orders=broker_orders)
+
+
+def _record_broker_update_locked(
+    target: Path, decision_id: str, *, state: str, broker_orders: list[dict[str, Any]]
+) -> dict[str, Any]:
     rows = _read_rows(target)
     proposal = _proposal(rows, decision_id)
-    latest = execution_state(target, decision_id)
+    decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+    latest = decision_rows[-1].get("execution") if decision_rows else None
     if latest is None or latest.get("state") not in {"submission_requested", "accepted", "partially_filled"}:
         raise ValueError("broker update requires a submission request")
     normalized = []

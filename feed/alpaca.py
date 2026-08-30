@@ -88,6 +88,12 @@ class AlpacaDataSource:
         """Use the broker clock rather than a guessed UTC session window."""
         return bool(self._trading.get_clock().is_open)
 
+    def order_status(self, order_id: str) -> dict[str, str]:
+        """Return one broker order's canonical id/status for paper reconciliation."""
+        order = self._trading.get_order_by_id(order_id)
+        status = getattr(order.status, "value", order.status)
+        return {"alpaca_order_id": str(order.id), "state": str(status).lower()}
+
     # --- order placement (one-off seeding) ---------------------------------
     def submit_market_order(self, symbol: str, qty: int | float) -> str:
         """Submit a day market buy order on the configured Alpaca account; returns the order id.
