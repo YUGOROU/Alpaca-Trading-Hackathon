@@ -120,6 +120,17 @@ class DecisionPipelineTests(unittest.TestCase):
                 record_dry_run(path, "decision-1", "elevated", decision, result,
                                execution_mode="autonomous-paper")
 
+    def test_legacy_eventless_proposal_remains_idempotent(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            row = record_dry_run(path, "decision-1", "elevated", decision, result)
+            row.pop("event")
+            path.write_text(json.dumps(row) + "\n")
+            self.assertEqual(record_dry_run(path, "decision-1", "elevated", decision, result), row)
+
     def test_human_approval_is_an_idempotent_lifecycle_transition(self):
         ctx = context("elevated")
         decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")

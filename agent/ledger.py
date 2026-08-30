@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import fcntl
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,6 +28,17 @@ def _append_row(target: Path, row: dict[str, Any]) -> None:
         stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+@contextmanager
+def _ledger_lock(target: Path):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with (target.parent / f".{target.name}.lock").open("a") as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
+
+
 def record_dry_run(
     path: str | Path,
     decision_id: str,
@@ -47,7 +60,7 @@ def record_dry_run(
     target = Path(path)
     existing = _read_rows(target)
     if existing:
-        prior = next((row for row in existing if row.get("event") == "proposal" and row["decision_id"] == decision_id), None)
+        prior = next((row for row in existing if row.get("event", "proposal") == "proposal" and row["decision_id"] == decision_id), None)
         if prior is not None:
             same_decision = prior["decision"] == {
                 "context_id": decision.context_id,
@@ -93,6 +106,11 @@ def record_human_approval(
     if not approved_by.strip():
         raise ValueError("approved_by is required")
     target = Path(path)
+    with _ledger_lock(target):
+        return _record_human_approval_locked(target, decision_id, approved_by=approved_by)
+
+
+def _record_human_approval_locked(target: Path, decision_id: str, *, approved_by: str) -> dict[str, Any]:
     rows = _read_rows(target)
     proposal = next((row for row in rows if row.get("event") == "proposal" and row.get("decision_id") == decision_id), None)
     if proposal is None:

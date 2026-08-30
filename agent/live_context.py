@@ -243,12 +243,18 @@ def build_live_context(
         "observed_at": now.isoformat(),
         "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
     }
+    broker_account = source.account()
     live_positions = source.positions()
+    class SnapshotSource:
+        def account(self): return broker_account
+        def positions(self): return live_positions
+        def __getattr__(self, name): return getattr(source, name)
+    snapshot_source = SnapshotSource()
     if current_contracts is None:
         current_contracts = count_hedge_contracts(live_positions, index_symbol)
     income_open = has_open_income(live_positions)
-    portfolio, market = observe(source, state, index_symbol=index_symbol)
-    broker_equity, _broker_cash = source.account()
+    portfolio, market = observe(snapshot_source, state, index_symbol=index_symbol)
+    broker_equity, _broker_cash = broker_account
     open_order_ids = None
     if hasattr(source, "open_order_ids"):
         open_order_ids = sorted(str(order_id) for order_id in source.open_order_ids())
