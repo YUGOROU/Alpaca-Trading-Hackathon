@@ -53,13 +53,14 @@ function orderId(value) {
 async function main() {
   const ledger = arg('--ledger')
   const decisionId = arg('--decision-id')
-  const prepared = python(['prepare-submission', '--ledger', ledger, '--decision-id', decisionId])
-  if (!Array.isArray(prepared.orders) || prepared.orders.length !== 1) {
-    throw new Error('the initial human executor permits exactly one approved gate order')
-  }
-
-  const connection = await connectAlpacaOrders(process.env)
+  let connection = null
+  let prepared = null
   try {
+    prepared = python([
+      'prepare-submission', '--ledger', ledger, '--decision-id', decisionId,
+      '--require-exactly-one-order',
+    ])
+    connection = await connectAlpacaOrders(process.env)
     const puts = await fetchOptionChain(connection.client, 'put')
     const calls = await fetchOptionChain(connection.client, 'call')
     const results = await placeGateOrders(connection.client, prepared.orders, { ...puts, ...calls })
@@ -69,7 +70,13 @@ async function main() {
     }
     const alpacaOrderId = orderId(placed[0].result)
     if (!alpacaOrderId) {
-      throw new Error('MCP response did not include an Alpaca order id; reconcile manually before retrying')
+      const clientOrderId = prepared.orders[0].client_order_id
+      python([
+        'record-submission-unknown', '--ledger', ledger, '--decision-id', decisionId,
+        '--client-order-ids-json', JSON.stringify([clientOrderId]),
+        '--reason', 'MCP placement response omitted Alpaca order id',
+      ])
+      throw new Error('MCP response omitted an Alpaca order id; reconcile by client order id before retrying')
     }
     const brokerEvent = python([
       'record-broker-update', '--ledger', ledger, '--decision-id', decisionId,
@@ -77,18 +84,19 @@ async function main() {
     ])
     process.stdout.write(JSON.stringify({ decision_id: decisionId, broker_event: brokerEvent }) + '\n')
   } catch (error) {
-    // A preflight rejection has not created submission_requested.  Do not append a
-    // misleading broker state in that case; all post-request errors are retained
-    // as a terminal submission_failed transition when possible.
-    try {
+    // The CLI validates order cardinality before writing submission_requested.
+    // Once preparation succeeds, even an MCP connection failure is recorded.
+    if (prepared !== null) {
+      try {
       python([
         'record-submission-failure', '--ledger', ledger, '--decision-id', decisionId,
         '--reason', error instanceof Error ? error.message : String(error),
       ])
-    } catch { /* preflight failures stay fail-closed without a broker assertion */ }
+      } catch { /* retain the original failure if a secondary audit write fails */ }
+    }
     throw error
   } finally {
-    await connection.close()
+    if (connection !== null) await connection.close()
   }
 }
 

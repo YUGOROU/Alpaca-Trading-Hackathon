@@ -252,7 +252,7 @@ def _record_submission_requested_locked(
     return row
 
 
-BROKER_STATES = frozenset({"accepted", "partially_filled", "filled", "rejected", "canceled", "expired", "submission_failed"})
+BROKER_STATES = frozenset({"accepted", "partially_filled", "filled", "rejected", "canceled", "expired", "submission_failed", "submission_unknown"})
 
 
 def record_submission_failure(path: str | Path, decision_id: str, *, reason: str) -> dict[str, Any]:
@@ -284,6 +284,33 @@ def record_submission_failure(path: str | Path, decision_id: str, *, reason: str
         return row
 
 
+def record_submission_unknown(
+    path: str | Path, decision_id: str, *, client_order_ids: list[str], reason: str
+) -> dict[str, Any]:
+    """Preserve an ambiguous broker write for lookup by idempotency key."""
+    if not client_order_ids or not all(isinstance(value, str) and value for value in client_order_ids):
+        raise ValueError("client_order_ids is required")
+    target = Path(path)
+    with _ledger_lock(target):
+        rows = _read_rows(target)
+        proposal = _proposal(rows, decision_id)
+        decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+        latest = decision_rows[-1].get("execution") if decision_rows else None
+        if latest is None or latest.get("state") != "submission_requested":
+            raise ValueError("uncertain submission requires a submission request")
+        row = {
+            "schema_version": 2,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": "submission_unknown",
+            "decision_id": decision_id,
+            "context_id": proposal["decision"]["context_id"],
+            "submission": {"client_order_ids": client_order_ids, "reason": reason[:500]},
+            "execution": {"mode": "human", "state": "submission_unknown", "approval_source": "human"},
+        }
+        _append_row(target, row)
+        return row
+
+
 def record_broker_update(
     path: str | Path, decision_id: str, *, state: str, broker_orders: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -304,7 +331,7 @@ def _record_broker_update_locked(
     proposal = _proposal(rows, decision_id)
     decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
     latest = decision_rows[-1].get("execution") if decision_rows else None
-    if latest is None or latest.get("state") not in {"submission_requested", "accepted", "partially_filled"}:
+    if latest is None or latest.get("state") not in {"submission_requested", "submission_unknown", "accepted", "partially_filled"}:
         raise ValueError("broker update requires a submission request")
     normalized = []
     for order in broker_orders:
