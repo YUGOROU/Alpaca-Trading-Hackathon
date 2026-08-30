@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import json
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -129,6 +130,11 @@ def paper_readiness() -> dict[str, bool]:
     This deliberately performs no order placement and exposes neither credentials
     nor balances/prices.  It is the deploy-time evidence for the paper read path.
     """
+    # Modal functions are imported from a generated module path, whereas the
+    # baked repository is at /app. Add it explicitly before importing project
+    # code (the long-running server already runs with cwd=/app).
+    if "/app" not in sys.path:
+        sys.path.insert(0, "/app")
     from feed import AlpacaDataSource
 
     source = AlpacaDataSource()
