@@ -14,7 +14,7 @@ function command() {
     .name('dsh --profile portfolio-agent')
     .description('Run a bounded regime-adaptive portfolio decision, once or on a heartbeat.')
     .helpOption('-h, --help', 'show this help')
-    .option('--scenario <name>', 'fixed scenario: calm, elevated, or stressed')
+    .option('--scenario <name>', 'fixed evaluation or replay scenario')
     .option('--live', 'observe the live Alpaca paper account instead of a fixture', false)
     .option('--heartbeat', 'run continuously on an interval instead of one shot', false)
     .option('--interval <ms>', 'heartbeat interval in milliseconds', String(1_800_000))
@@ -31,8 +31,11 @@ export function apply(ctx) {
     if (!options.live && !options.scenario) {
       program.error('error: provide --scenario <name> or --live')
     }
-    if (options.scenario && !['calm', 'elevated', 'stressed'].includes(options.scenario)) {
-      program.error('error: scenario must be calm, elevated, or stressed')
+    if (options.scenario && ![
+      'calm', 'elevated', 'stressed', 'near_risk_limit', 'near_coverage_limit',
+      'suboptimal_alternative', 'tradeoff_choice', 'untrusted_data',
+    ].includes(options.scenario)) {
+      program.error('error: unknown fixed evaluation scenario')
     }
     const intervalMs = Number(options.interval)
     if (!Number.isFinite(intervalMs) || intervalMs <= 0) {

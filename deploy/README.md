@@ -5,13 +5,17 @@
 the image or repository.
 
 Before enabling the heartbeat, create one Modal Secret named `huggingface` with
-`HF_TOKEN` and the evaluated `HF_MODEL_ID`. It is intentionally the only
-application secret at this stage: Alpaca credentials are **not** mounted, so
-this deployment cannot contact an Alpaca account or submit an order.
+only `HF_TOKEN`. It is intentionally the only application secret at this stage:
+`HF_MODEL_ID` is configuration, not a credential, and is injected into the
+server container as a non-secret environment variable (see below). Alpaca
+credentials are **not** mounted, so this deployment cannot contact an Alpaca
+account or submit an order.
 
 Run **Actions → Deploy Modal DSH heartbeat** manually only after the model route
-has passed the repository's replay evaluation and its id is set as
-`HF_MODEL_ID`. It deploys a one-CPU Modal Server
+has passed the repository's replay evaluation and the evaluated model id
+(`zai-org/GLM-5.3:baseten` by default) is injected as `HF_MODEL_ID` in the
+server environment. The validated model id can be overridden at deploy time by
+setting `HF_MODEL_ID` in the calling environment. It deploys a one-CPU Modal Server
 with `min_containers=1`; its server process owns the heartbeat continuously and
 exposes an authenticated `/healthz` endpoint. The `recreate` deploy strategy
 stops the prior deployment before the new server starts. `/data/heartbeat.lock`

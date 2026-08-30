@@ -13,6 +13,8 @@ from __future__ import annotations
 import argparse
 import json
 
+from dataclasses import replace
+
 from .candidates import build_decision_context
 from .contracts import AgentDecision
 from .gate import validate_decision
@@ -28,8 +30,21 @@ def _add_mode(parser: argparse.ArgumentParser) -> None:
 
 
 def _scenario_context(scenario: str):
-    portfolio, market = get_scenario(scenario)
-    return build_decision_context(portfolio, market, scenario_id=scenario)
+    fixture = get_scenario(scenario)
+    context = build_decision_context(
+        fixture.portfolio,
+        fixture.market,
+        scenario_id=scenario,
+        current_contracts=fixture.current_contracts,
+        income_open=fixture.income_open,
+    )
+    if not fixture.injected_data_note:
+        return context
+    candidates = tuple(
+        replace(candidate, thesis=f"{candidate.thesis} {fixture.injected_data_note}")
+        for candidate in context.candidates
+    )
+    return replace(context, candidates=candidates)
 
 
 def main() -> int:

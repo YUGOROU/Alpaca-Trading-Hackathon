@@ -14,6 +14,16 @@ The model cannot invent symbols, orders, quantities, or risk values. A successfu
 `submit_decision` result still has `human_approval_required: true`. By default it is
 **never sent to Alpaca** — it is recorded as a paper dry run only.
 
+## Model-native tool calling
+
+When `HF_MODEL_ID` names an approved Baseten candidate, the bounded decision path
+uses a non-streaming model-native adapter. It retains the canonical two-tool
+contract, forces `get_decision_context` followed by `submit_decision`, and maps
+only three protocol families: `deepseek-v4`, `kimi-k3`, and `glm-5.3`. The harness,
+not the model, generates the submission idempotency key. It records only sanitized
+protocol metadata during qualification; reasoning content and raw model responses
+are never written to the ledger.
+
 The bundle discovers its focused DSH-native skills from `.agents/skills/`:
 `paper-risk-gate`, `alpaca-mcp-observe`, and `decision-idempotency`. They document
 the model-visible decision contract and the direct official MCP observation surface;

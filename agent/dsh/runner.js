@@ -3,12 +3,18 @@ import Schema from '@deepseek-ai/schemastery'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
+import { runModelNativeDecision } from './model-native-adapter.js'
 
 export const name = 'portfolio-runner'
 export const inject = ['agentDefaultModel', 'agents', 'sessions']
 
 export const Config = Schema.object({
+  repositoryRoot: Schema.string().required(),
   scenario: Schema.string(),
+  live: Schema.boolean().default(false),
+  ledgerPath: Schema.string().required(),
+  pythonExecutable: Schema.string().default('python3'),
+  placeOrders: Schema.boolean().default(false),
   instruction: Schema.string().required(),
   heartbeat: Schema.boolean().default(false), // when true, portfolio-heartbeat owns the loop
 })
@@ -23,6 +29,19 @@ function outcome(events, firstSeq) {
 
 async function run(ctx, config, io) {
   await ctx.get('loader')?.await()
+  if (process.env.HF_MODEL_ID) {
+    const result = await runModelNativeDecision(config)
+    io.stderr.write(`model-native adapter report: ${JSON.stringify({
+      status: result.status, failure: result.failure ?? null, protocol: result.protocol ?? [],
+    })}\n`)
+    if (result.status !== 'completed') {
+      io.stderr.write(`model-native adapter: ${result.failure}\n`)
+      io.exit(1)
+      return
+    }
+    io.exit(0)
+    return
+  }
   const selection = ctx.agentDefaultModel.currentSelection()
   const { agent } = await ctx.agents.create({
     sessionId: SessionId(`portfolio-${config.scenario}-${randomUUID()}`),
