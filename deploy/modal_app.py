@@ -76,6 +76,10 @@ approval_secret = modal.Secret.from_name(APPROVAL_SECRET_NAME, required_keys=["H
     memory=2048,
     min_containers=1,
     max_containers=1,
+    # The UI is reached through Modal's public endpoint; mutations still require
+    # HUMAN_APPROVAL_TOKEN in the application, so removing proxy auth does not
+    # expose proposal data or the paper-order path.
+    unauthenticated=True,
     volumes={"/data": state_volume},
     secrets=[hf_token_secret, alpaca_paper_secret, approval_secret],
     # HF_MODEL_ID is injected as non-secret config (not part of the
