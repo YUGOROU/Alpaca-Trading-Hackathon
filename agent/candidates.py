@@ -92,6 +92,7 @@ def build_decision_context(
     current_contracts: int = 0,
     income_open: bool = False,
     expiry_days: int = 4,
+    input_provenance: dict | None = None,
 ) -> DecisionContext:
     """Create only choices that pass the coarse deterministic risk envelope.
 
@@ -217,9 +218,17 @@ def build_decision_context(
         raise RuntimeError("candidate generation produced no admissible action")
 
     ids = [candidate.candidate_id for candidate in candidates]
+    # A live context must bind the provenance timestamps as well as the risk
+    # snapshot.  Rebuilding from the persisted inputs therefore retains the
+    # same ID, while a newly observed snapshot gets a distinct decision ID.
+    context_id = _context_id(scenario_id, snapshot, ids)
+    if input_provenance is not None:
+        provenance_bytes = json.dumps(input_provenance, sort_keys=True, separators=(",", ":"))
+        context_id = sha256(f"{context_id}:{provenance_bytes}".encode()).hexdigest()[:20]
     return DecisionContext(
-        context_id=_context_id(scenario_id, snapshot, ids),
+        context_id=context_id,
         scenario_id=scenario_id,
         snapshot=snapshot,
         candidates=tuple(candidates),
+        input_provenance=input_provenance,
     )

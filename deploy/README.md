@@ -24,7 +24,10 @@ owners.
 
 The persisted DSH profile, sessions, contexts, and ledger survive container
 replacement on the Volume. Deployment starts the LLM heartbeat, but it cannot
-contact an Alpaca account because no Alpaca credential secret is mounted.
+contact an Alpaca account because no Alpaca credential secret is mounted. Since
+`--live` now fails closed without those credentials, this deployment must not be
+treated as a live-observation success until a separately reviewed read-only
+credential mount is added.
 
 ## Model selection (no fine-tuning)
 

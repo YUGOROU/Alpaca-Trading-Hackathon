@@ -15,11 +15,12 @@ function command() {
     .description('Run a bounded regime-adaptive portfolio decision, once or on a heartbeat.')
     .helpOption('-h, --help', 'show this help')
     .option('--scenario <name>', 'fixed evaluation or replay scenario')
+    .option('--mock', 'observe the explicit local mock source (never live)', false)
     .option('--live', 'observe the live Alpaca paper account instead of a fixture', false)
     .option('--heartbeat', 'run continuously on an interval instead of one shot', false)
     .option('--interval <ms>', 'heartbeat interval in milliseconds', String(1_800_000))
-    .option('--place', 'autonomously place paper orders for approved decisions', false)
-    .option('--ledger <path>', 'dry-run JSONL ledger', '.agent/decisions.jsonl')
+    .option('--place', 'deprecated; autonomous placement is not armed in this release', false)
+    .option('--ledger <path>', 'canonical proposal JSONL ledger', '.agent/decisions.jsonl')
     .argument('[instruction...]', 'decision objective')
 }
 
@@ -28,9 +29,10 @@ export function apply(ctx) {
   program.action((instructionParts, options) => {
     const instruction = instructionParts.join(' ').trim()
     if (instruction === '') program.error('error: an instruction is required')
-    if (!options.live && !options.scenario) {
-      program.error('error: provide --scenario <name> or --live')
+    if (Number(Boolean(options.live)) + Number(Boolean(options.mock)) + Number(Boolean(options.scenario)) !== 1) {
+      program.error('error: provide exactly one of --scenario <name>, --mock, or --live')
     }
+    if (options.place) program.error('error: --place is not armed; use Human Approval mode')
     if (options.scenario && ![
       'calm', 'elevated', 'stressed', 'near_risk_limit', 'near_coverage_limit',
       'suboptimal_alternative', 'tradeoff_choice', 'untrusted_data',
@@ -44,10 +46,11 @@ export function apply(ctx) {
     ctx.provide('portfolioStartup', {
       repositoryRoot,
       scenario: options.scenario ?? null,
+      mock: Boolean(options.mock),
       live: Boolean(options.live),
       heartbeat: Boolean(options.heartbeat),
       intervalMs,
-      placeOrders: Boolean(options.place),
+      placeOrders: false,
       ledgerPath: resolve(options.ledger),
       instruction,
     })

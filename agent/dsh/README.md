@@ -5,7 +5,7 @@ The model can access exactly three tools:
 
 - `get_decision_context`: retrieves the risk snapshot and the admissible candidates.
 - `submit_decision`: selects one candidate, validates it through the deterministic
-  gate, and records a paper dry run.
+  gate, and records a canonical paper-order proposal.
 - `get_alpaca_readonly_snapshot`: reads the paper account, positions, and SPY market
   data through the official Alpaca MCP server. Order, cancellation, and account
   mutation tools are not exposed.
@@ -29,13 +29,10 @@ The bundle discovers its focused DSH-native skills from `.agents/skills/`:
 the model-visible decision contract and the direct official MCP observation surface;
 they never grant an order or account-mutation capability.
 
-**Autonomous placement (opt-in).** When the operator starts the bundle with `--place`,
-an approved decision's options overlay may be auto-placed on the **paper** account by
-the system after the gate approves it. The model never places an order itself —
-placement is done server-side by `agent/dsh/alpaca-orders.js`, which resolves each leg
-to a real listed OCC contract and fails closed if any leg cannot. The single-leg
-protective put and covered call go as plain option orders; the iron condor goes as a
-4-leg `mleg` order. Without `--place`, nothing is ever sent to Alpaca.
+**Execution boundary.** `approved_for_dry_run` creates only a proposal; it is not
+broker submission permission. The current bundle supports Human Approval records in
+the canonical Python ledger but cannot submit orders. `--place` fails closed while the
+autonomous-paper lifecycle, fresh revalidation, and reconciliation are implemented.
 
 ## Setup
 
@@ -72,22 +69,22 @@ calls only `tools/list`; it does not invoke an Alpaca API tool.
 ## Heartbeat runtime (market-monitoring loop)
 
 `agent/dsh/heartbeat.js` is a DSH-native long-lived loop that wakes on an interval
-during US market hours, runs one decide cycle per tick, and can place approved paper
-orders autonomously (when `--place` is set). It replaces the retired GitHub Actions
-cron as the scheduling owner:
+during US market hours and records one bounded proposal per tick. It replaces the
+retired GitHub Actions cron as the scheduling owner:
 
 ```bash
 cd agent/dsh
 DSH_HOME="$PWD/../../.dsh" ./node_modules/.bin/dsh \
   plugin --profile portfolio-agent add "$PWD"
-dsh --profile portfolio-agent --live --heartbeat --interval 1800000 --place \
+dsh --profile portfolio-agent --live --heartbeat --interval 1800000 \
   "protect the book; step the hedge in only if risk justifies it"
 ```
 
 - `--live` observes the real paper account (instead of a fixture scenario).
+- `--mock` selects the explicit local mock source; it is never a `--live` fallback.
 - `--heartbeat` loops; omit it for a one-shot run.
 - `--interval <ms>` sets the cadence (default 30 min, matching the retired cron).
-- `--place` enables autonomous paper placement of approved single-leg hedges.
+- `--place` is rejected until autonomous-paper is explicitly armed in a later release.
 
 ## Alpaca paper read-only boundary
 

@@ -61,10 +61,11 @@ class DecisionContext:
     scenario_id: str
     snapshot: RiskSnapshot
     candidates: tuple[DecisionCandidate, ...]
+    input_provenance: dict[str, Any] | None = None
 
     def to_model_dict(self) -> dict[str, Any]:
         snapshot = self.snapshot
-        return {
+        result = {
             "context_id": self.context_id,
             "scenario_id": self.scenario_id,
             "risk": {
@@ -84,6 +85,9 @@ class DecisionContext:
                 "human_approval_required_before_submission": True,
             },
         }
+        if self.input_provenance is not None:
+            result["input_provenance"] = self.input_provenance
+        return result
 
 
 @dataclass(frozen=True)
@@ -115,3 +119,17 @@ class GateResult:
             "orders": list(self.orders),
             "human_approval_required": self.human_approval_required,
         }
+
+
+EXECUTION_MODES = frozenset({"human", "autonomous-paper"})
+
+
+def validate_execution_mode(mode: str) -> str:
+    """Return a supported execution mode or fail closed.
+
+    ``approved_for_dry_run`` is deliberately independent from this setting: it
+    authorizes a proposal record, never a broker submission.
+    """
+    if mode not in EXECUTION_MODES:
+        raise ValueError(f"unknown execution mode: {mode}")
+    return mode

@@ -1,4 +1,4 @@
-import { getDecisionContext, placeApprovedDecision, submitDecision } from './decision-bridge.js'
+import { getDecisionContext, submitDecision } from './decision-bridge.js'
 
 export const HF_CHAT_COMPLETIONS_URL = 'https://router.huggingface.co/v1/chat/completions'
 export const PROVIDER_TIMEOUT_MS = 30_000
@@ -220,7 +220,6 @@ export async function runModelNativeDecision(config, {
   modelId = process.env.HF_MODEL_ID,
   getContext = getDecisionContext,
   submit = submitDecision,
-  place = placeApprovedDecision,
 } = {}) {
   if (!token) throw new Error('HF_TOKEN is required for the model-native adapter')
   const profile = modelProfile(modelId ?? '')
@@ -246,11 +245,6 @@ export async function runModelNativeDecision(config, {
   let value
   try { value = await submit(config, phaseTwo.call.arguments) } catch {
     return { status: 'failed', failure: 'tool_dispatch_error', metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
-  }
-  if (value.gate?.status === 'approved_for_dry_run' && config.placeOrders) {
-    try { value.placement = await place(value.gate) } catch (error) {
-      value.placement = { status: 'error', reason: error instanceof Error ? error.message : String(error) }
-    }
   }
   return { status: 'completed', value, metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
 }

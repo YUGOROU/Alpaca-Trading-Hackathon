@@ -6,7 +6,13 @@ import tempfile
 import unittest
 
 from agent import AgentDecision, build_decision_context, validate_decision
-from agent.ledger import record_dry_run
+from agent.ledger import (
+    execution_state,
+    record_broker_update,
+    record_dry_run,
+    record_human_approval,
+    record_submission_requested,
+)
 from agent.scenarios import get_scenario
 
 
@@ -84,11 +90,95 @@ class DecisionPipelineTests(unittest.TestCase):
             ledger_text = path.read_text(encoding="utf-8")
             self.assertEqual(len(ledger_text.splitlines()), 1)
             self.assertIn("café", ledger_text)
+            self.assertEqual(first["schema_version"], 2)
+            self.assertEqual(first["execution"], {
+                "mode": "human", "state": "proposed", "approval_source": None,
+            })
 
             conflicting = AgentDecision(ctx.context_id, "hold", "Different decision.")
             conflicting_result = validate_decision(ctx, conflicting)
             with self.assertRaisesRegex(ValueError, "different content"):
                 record_dry_run(path, "decision-1", "elevated", conflicting, conflicting_result)
+
+    def test_ledger_rejects_unknown_execution_mode(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "unknown execution mode"):
+                record_dry_run(Path(tmp) / "decisions.jsonl", "decision-1", "elevated", decision, result,
+                               execution_mode="surprise")
+
+    def test_ledger_rejects_execution_mode_change_for_same_decision(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            with self.assertRaisesRegex(ValueError, "different content"):
+                record_dry_run(path, "decision-1", "elevated", decision, result,
+                               execution_mode="autonomous-paper")
+
+    def test_legacy_eventless_proposal_remains_idempotent(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            row = record_dry_run(path, "decision-1", "elevated", decision, result)
+            row.pop("event")
+            path.write_text(json.dumps(row) + "\n")
+            self.assertEqual(record_dry_run(path, "decision-1", "elevated", decision, result), row)
+
+    def test_human_approval_is_an_idempotent_lifecycle_transition(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            approval = record_human_approval(path, "decision-1", approved_by="operator-1")
+            self.assertEqual(approval["event"], "approval")
+            self.assertEqual(approval["execution"]["state"], "approved")
+            self.assertEqual(record_human_approval(path, "decision-1", approved_by="operator-1"), approval)
+            self.assertEqual(execution_state(path, "decision-1")["approval_source"], "human")
+            with self.assertRaisesRegex(ValueError, "different approval"):
+                record_human_approval(path, "decision-1", approved_by="operator-2")
+
+    def test_human_approval_rejects_autonomous_or_rejected_proposals(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        approved = validate_decision(ctx, decision)
+        rejected = validate_decision(ctx, AgentDecision("wrong", "hold", "stale"))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "autonomous", "elevated", decision, approved,
+                           execution_mode="autonomous-paper")
+            record_dry_run(path, "rejected", "elevated", decision, rejected)
+            with self.assertRaisesRegex(ValueError, "only valid in human"):
+                record_human_approval(path, "autonomous", approved_by="operator-1")
+            with self.assertRaisesRegex(ValueError, "only approved proposals"):
+                record_human_approval(path, "rejected", approved_by="operator-1")
+
+    def test_submission_lifecycle_requires_approval_and_matching_revalidation(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            valid = {"ok": True, "context_id": ctx.context_id, "equity": 100.0, "open_order_ids": []}
+            with self.assertRaisesRegex(ValueError, "approved decision"):
+                record_submission_requested(path, "decision-1", revalidation=valid)
+            record_human_approval(path, "decision-1", approved_by="operator-1")
+            requested = record_submission_requested(path, "decision-1", revalidation=valid)
+            self.assertEqual(requested["execution"]["state"], "submission_requested")
+            accepted = record_broker_update(
+                path, "decision-1", state="accepted", broker_orders=[{"alpaca_order_id": "broker-1"}],
+            )
+            self.assertEqual(accepted["broker_orders"][0]["alpaca_order_id"], "broker-1")
+            self.assertEqual(execution_state(path, "decision-1")["state"], "accepted")
 
 
 if __name__ == "__main__":

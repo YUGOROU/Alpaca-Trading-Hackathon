@@ -11,10 +11,10 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions']
 export const Config = Schema.object({
   repositoryRoot: Schema.string().required(),
   scenario: Schema.string(),
+  mock: Schema.boolean().default(false),
   live: Schema.boolean().default(false),
   ledgerPath: Schema.string().required(),
   pythonExecutable: Schema.string().default('python3'),
-  placeOrders: Schema.boolean().default(false),
   heartbeat: Schema.boolean().default(false), // only loop when heartbeat mode is selected
   instruction: Schema.string().required(),
   intervalMs: Schema.number().default(1_800_000), // 30 min — matches the retired cron cadence
