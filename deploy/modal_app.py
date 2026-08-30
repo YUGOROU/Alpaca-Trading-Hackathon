@@ -122,6 +122,28 @@ def inspect_state() -> dict[str, bool]:
     }
 
 
+@app.function(image=image, cpu=1.0, memory=2048, timeout=90, secrets=[alpaca_paper_secret])
+def paper_readiness() -> dict[str, bool]:
+    """Verify the mounted Alpaca account is readable without returning account data.
+
+    This deliberately performs no order placement and exposes neither credentials
+    nor balances/prices.  It is the deploy-time evidence for the paper read path.
+    """
+    from feed import AlpacaDataSource
+
+    source = AlpacaDataSource()
+    equity, _cash = source.account()
+    positions = source.positions()
+    price = source.latest_price("SPY")
+    return {
+        "paper_credentials_mounted": True,
+        "account_readable": equity >= 0.0,
+        "positions_readable": isinstance(positions, list),
+        "spy_quote_readable": price > 0.0,
+        "market_open": source.is_market_open(),
+    }
+
+
 @app.function(image=image, cpu=1.0, memory=2048, timeout=900, secrets=[hf_token_secret])
 def evaluate_model(model_id: str) -> dict[str, object]:
     """Run the fixed three-scenario DSH selection evaluation without Alpaca access.

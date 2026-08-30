@@ -36,6 +36,16 @@ approves a proposal and its snapshot passes fresh revalidation. The initial UI
 allows exactly one approved options order per submission, making the first manual
 paper-order validation a bounded operation.
 
+After deployment, run the non-mutating paper-read probe before approving any
+proposal:
+
+```bash
+modal run deploy/modal_app.py::paper_readiness
+```
+
+It returns booleans only: account, positions, and an SPY quote must all be
+readable. It does not return credentials, balances, prices, or submit an order.
+
 ## Model selection (no fine-tuning)
 
 Run the credentialed but Alpaca-free fixed-scenario gate before changing the
