@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
 import { connectAlpacaOrders, placeGateOrders, fetchOptionChain } from './alpaca-orders.js'
@@ -39,13 +39,17 @@ export function getDecisionContext(config) {
 
 // The model never receives the idempotency key.  It is a harness-owned value,
 // so a malformed/native tool protocol cannot corrupt or omit it.
+export function decisionId(contextId, candidateId) {
+  return `dsh-${createHash('sha256').update(`${contextId}\u0000${candidateId}`).digest('hex').slice(0, 32)}`
+}
+
 export function submitDecision(config, { context_id, candidate_id, reason }) {
   return bridge(config, [
     'submit', ...modeArgs(config),
     '--context-id', context_id,
     '--candidate-id', candidate_id,
     '--reason', reason,
-    '--decision-id', `dsh-${randomUUID()}`,
+    '--decision-id', decisionId(context_id, candidate_id),
     '--ledger', config.ledgerPath,
   ])
 }

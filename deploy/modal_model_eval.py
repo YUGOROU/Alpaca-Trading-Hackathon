@@ -46,7 +46,9 @@ evaluation_results = modal.Dict.from_name(RESULTS_DICT_NAME, create_if_missing=T
     image=image,
     cpu=1.0,
     memory=2048,
-    timeout=1800,
+    # Full qualification plus Stage A/B permits 62 provider calls at 30 s
+    # each, then needs process and artifact-writing headroom.
+    timeout=2400,
     secrets=[hf_token_secret],
 )
 def evaluate_model(model_id: str, result_key: str, qualification_only: bool = False) -> dict[str, object]:
@@ -70,7 +72,7 @@ def evaluate_model(model_id: str, result_key: str, qualification_only: bool = Fa
             cwd="/app",
             capture_output=True,
             text=True,
-            timeout=1750,
+            timeout=2300,
             check=False,
         )
         if completed.returncode != 0 or not result_path.exists():
