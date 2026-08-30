@@ -248,11 +248,12 @@ def build_live_context(
         current_contracts = count_hedge_contracts(live_positions, index_symbol)
     income_open = has_open_income(live_positions)
     portfolio, market = observe(source, state, index_symbol=index_symbol)
+    broker_equity, _broker_cash = source.account()
     open_order_ids = None
     if hasattr(source, "open_order_ids"):
         open_order_ids = sorted(str(order_id) for order_id in source.open_order_ids())
     execution_snapshot = {
-        "equity": portfolio.equity,
+        "equity": float(broker_equity),
         "positions": sorted((str(symbol), float(quantity)) for symbol, quantity, _price in live_positions if quantity),
         "open_order_ids": open_order_ids,
     }

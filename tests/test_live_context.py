@@ -100,7 +100,7 @@ class LiveContextTest(unittest.TestCase):
         portfolio, market = get_scenario("elevated")
         save_context_inputs(
             "live-context", portfolio, market, expiry_days=5, current_contracts=0,
-            input_provenance={"source": "alpaca_rest"},
+            input_provenance={"source": "alpaca_rest", "expires_at": "2099-01-01T00:00:00+00:00"},
             execution_snapshot={"equity": 10_000.0, "positions": [("SPY", 10.0)], "open_order_ids": ["open-1"]},
         )
         source = Source()
@@ -109,6 +109,16 @@ class LiveContextTest(unittest.TestCase):
         rejected = revalidate_live_context("live-context", source)
         self.assertFalse(rejected["ok"])
         self.assertIn("open_orders_changed", rejected["reasons"])
+
+    def test_live_revalidation_rejects_expired_context(self) -> None:
+        from agent.live_context import save_context_inputs
+        from agent.revalidation import revalidate_live_context
+        from agent.scenarios import get_scenario
+        portfolio, market = get_scenario("elevated")
+        save_context_inputs("expired", portfolio, market, expiry_days=5, current_contracts=0,
+                            input_provenance={"source": "alpaca_rest", "expires_at": "2000-01-01T00:00:00+00:00"},
+                            execution_snapshot={"equity": 1.0, "positions": [], "open_order_ids": []})
+        self.assertEqual(revalidate_live_context("expired", object())["reasons"], ["stale_context"])
 
     def test_unknown_context_id_returns_none(self) -> None:
         from agent.live_context import rebuild_live_context

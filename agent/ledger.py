@@ -54,7 +54,7 @@ def record_dry_run(
                 "candidate_id": decision.candidate_id,
                 "reason": decision.reason,
             }
-            if same_decision and prior["gate"] == result.to_dict():
+            if same_decision and prior["gate"] == result.to_dict() and prior.get("execution", {}).get("mode") == execution_mode:
                 return prior
             raise ValueError("decision_id already exists with different content")
 

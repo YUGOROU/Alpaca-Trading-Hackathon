@@ -109,6 +109,17 @@ class DecisionPipelineTests(unittest.TestCase):
                 record_dry_run(Path(tmp) / "decisions.jsonl", "decision-1", "elevated", decision, result,
                                execution_mode="surprise")
 
+    def test_ledger_rejects_execution_mode_change_for_same_decision(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            with self.assertRaisesRegex(ValueError, "different content"):
+                record_dry_run(path, "decision-1", "elevated", decision, result,
+                               execution_mode="autonomous-paper")
+
     def test_human_approval_is_an_idempotent_lifecycle_transition(self):
         ctx = context("elevated")
         decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")

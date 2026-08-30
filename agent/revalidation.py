@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from .live_context import load_context_inputs
@@ -40,6 +41,12 @@ def revalidate_live_context(
         return {"ok": False, "reasons": ["unknown_context"]}
     if row.get("input_provenance", {}).get("source") != "alpaca_rest":
         return {"ok": False, "reasons": ["non_live_context"]}
+    try:
+        expires_at = datetime.fromisoformat(row["input_provenance"]["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "reasons": ["invalid_context_provenance"]}
+    if expires_at <= datetime.now(UTC):
+        return {"ok": False, "reasons": ["stale_context"]}
     baseline = row.get("execution_snapshot")
     if not isinstance(baseline, dict):
         return {"ok": False, "reasons": ["missing_execution_snapshot"]}
