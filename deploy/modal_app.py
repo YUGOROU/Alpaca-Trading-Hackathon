@@ -141,13 +141,15 @@ def paper_readiness() -> dict[str, bool]:
     equity, _cash = source.account()
     positions = source.positions()
     price = source.latest_price("SPY")
-    return {
+    result = {
         "paper_credentials_mounted": True,
         "account_readable": equity >= 0.0,
         "positions_readable": isinstance(positions, list),
         "spy_quote_readable": price > 0.0,
         "market_open": source.is_market_open(),
     }
+    print(json.dumps(result, sort_keys=True))
+    return result
 
 
 @app.function(image=image, cpu=1.0, memory=2048, timeout=900, secrets=[hf_token_secret])
