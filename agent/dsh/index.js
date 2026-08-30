@@ -1,7 +1,7 @@
 import Schema from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { withAlpacaReadonlySnapshot, withAlpacaReadonlyTool } from './alpaca-readonly.js'
-import { getDecisionContext, placeApprovedDecision, submitDecision } from './decision-bridge.js'
+import { getDecisionContext, submitDecision } from './decision-bridge.js'
 
 export { resolvePython } from './decision-bridge.js'
 
@@ -13,10 +13,10 @@ export const inject = ['tools']
 export const Config = Schema.object({
   repositoryRoot: Schema.string().required(),
   scenario: Schema.string(),
+  mock: Schema.boolean().default(false),
   live: Schema.boolean().default(false),
   ledgerPath: Schema.string().required(),
   pythonExecutable: Schema.string().default('python3'),
-  placeOrders: Schema.boolean().default(false), // autonomous paper placement — off unless enabled
 })
 
 const CONTEXT_OUTPUT = {
@@ -28,6 +28,7 @@ const CONTEXT_OUTPUT = {
     risk: { type: 'json', required: true },
     candidates: { type: 'json', required: true },
     decision_contract: { type: 'json', required: true },
+    input_provenance: { type: 'json' },
   },
 }
 
@@ -35,11 +36,14 @@ const SUBMIT_OUTPUT = {
   type: 'object',
   additionalProperties: false,
   properties: {
+    schema_version: { type: 'number', required: true },
+    timestamp: { type: 'string', required: true },
+    event: { type: 'string', required: true },
     decision_id: { type: 'string', required: true },
     scenario_id: { type: 'string', required: true },
     decision: { type: 'json', required: true },
     gate: { type: 'json', required: true },
-    placement: { type: 'json' },
+    execution: { type: 'json', required: true },
   },
 }
 
@@ -162,7 +166,7 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'submit_decision',
-    description: 'Select exactly one candidate returned by get_decision_context. The deterministic gate validates it and creates paper-only dry-run orders.',
+    description: 'Select exactly one candidate returned by get_decision_context. The deterministic gate validates it and records a paper-order proposal. It cannot submit an Alpaca order.',
     parameters: {
       context_id: { type: 'string', required: true },
       candidate_id: { type: 'string', required: true },
@@ -175,13 +179,6 @@ export function apply(ctx, config) {
     async execute(args, exec) {
       const value = await submitDecision(config, args)
       if (value.gate?.status === 'approved_for_dry_run') {
-        if (config.placeOrders) {
-          try {
-            value.placement = await placeApprovedDecision(value.gate)
-          } catch (error) {
-            value.placement = { status: 'error', reason: error instanceof Error ? error.message : String(error) }
-          }
-        }
         exec.concludeTurn()
       }
       return value

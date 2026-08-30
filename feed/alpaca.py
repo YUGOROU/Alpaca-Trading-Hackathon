@@ -76,6 +76,18 @@ class AlpacaDataSource:
             out.append((p.symbol, float(p.qty), price))
         return out
 
+    def open_order_ids(self) -> list[str]:
+        """Return open paper-order IDs for submission-time reconciliation."""
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        orders = self._trading.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
+        return [str(order.id) for order in orders]
+
+    def is_market_open(self) -> bool:
+        """Use the broker clock rather than a guessed UTC session window."""
+        return bool(self._trading.get_clock().is_open)
+
     # --- order placement (one-off seeding) ---------------------------------
     def submit_market_order(self, symbol: str, qty: int | float) -> str:
         """Submit a day market buy order on the configured Alpaca account; returns the order id.

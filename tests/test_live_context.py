@@ -6,6 +6,7 @@ defeats the live stale-context_id problem the fixtures never hit.
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 import os
 import tempfile
 import unittest
@@ -44,19 +45,70 @@ class LiveContextTest(unittest.TestCase):
 
     def test_context_then_submit_round_trip_validates(self) -> None:
         from feed import MockDataSource, StateStore
-        from agent.live_context import build_live_context, rebuild_live_context
+        from agent.live_context import build_live_context, rebuild_observed_context
 
         state = StateStore(os.environ["AGENT_STATE_PATH"])
         built = build_live_context(source=MockDataSource(), state=state)
 
         # submit rebuilds from persisted inputs — must be the SAME context.
-        rebuilt = rebuild_live_context(built.context_id)
+        rebuilt = rebuild_observed_context(built.context_id, expected_source="mock")
         self.assertIsNotNone(rebuilt)
         self.assertEqual(rebuilt.context_id, built.context_id)
 
         decision = AgentDecision(built.context_id, built.candidates[0].candidate_id, "test reason")
         result = validate_decision(rebuilt, decision)
         self.assertTrue(result.approved, msg=str(result.reasons))
+
+    def test_live_mode_never_falls_back_to_mock_without_credentials(self) -> None:
+        from agent.live_context import build_live_context
+
+        with self.assertRaisesRegex(RuntimeError, "--live requires ALPACA_API_KEY"):
+            build_live_context()
+
+    def test_expired_observed_context_cannot_be_rebuilt(self) -> None:
+        from feed import MockDataSource, StateStore
+        from agent.live_context import build_live_context, rebuild_observed_context
+
+        observed_at = datetime(2026, 8, 30, tzinfo=UTC)
+        state = StateStore(os.environ["AGENT_STATE_PATH"])
+        built = build_live_context(
+            source=MockDataSource(), state=state, source_kind="mock", now=observed_at,
+        )
+        self.assertIsNone(
+            rebuild_observed_context(
+                built.context_id, expected_source="mock", now=observed_at + timedelta(minutes=6),
+            )
+        )
+
+    def test_live_revalidation_requires_unchanged_fresh_broker_state(self) -> None:
+        from agent.live_context import save_context_inputs
+        from agent.revalidation import revalidate_live_context
+        from agent.scenarios import get_scenario
+
+        class Source:
+            def __init__(self):
+                self.equity = 10_000.0
+                self.current_positions = [("SPY", 10.0, 500.0)]
+                self.orders = ["open-1"]
+                self.open = True
+
+            def account(self): return self.equity, 5_000.0
+            def positions(self): return self.current_positions
+            def open_order_ids(self): return self.orders
+            def is_market_open(self): return self.open
+
+        portfolio, market = get_scenario("elevated")
+        save_context_inputs(
+            "live-context", portfolio, market, expiry_days=5, current_contracts=0,
+            input_provenance={"source": "alpaca_rest"},
+            execution_snapshot={"equity": 10_000.0, "positions": [("SPY", 10.0)], "open_order_ids": ["open-1"]},
+        )
+        source = Source()
+        self.assertTrue(revalidate_live_context("live-context", source)["ok"])
+        source.orders = ["open-2"]
+        rejected = revalidate_live_context("live-context", source)
+        self.assertFalse(rejected["ok"])
+        self.assertIn("open_orders_changed", rejected["reasons"])
 
     def test_unknown_context_id_returns_none(self) -> None:
         from agent.live_context import rebuild_live_context

@@ -112,6 +112,7 @@
       config:
         repositoryRoot: !!js ctx.portfolioStartup.repositoryRoot
         scenario: !!js ctx.portfolioStartup.scenario
+        mock: !!js ctx.portfolioStartup.mock
         live: !!js ctx.portfolioStartup.live
         ledgerPath: !!js ctx.portfolioStartup.ledgerPath
         pythonExecutable: python3
@@ -126,6 +127,7 @@
       config:
         repositoryRoot: !!js ctx.portfolioStartup.repositoryRoot
         scenario: !!js ctx.portfolioStartup.scenario
+        mock: !!js ctx.portfolioStartup.mock
         live: !!js ctx.portfolioStartup.live
         ledgerPath: !!js ctx.portfolioStartup.ledgerPath
         pythonExecutable: python3
@@ -139,6 +141,7 @@
       config:
         repositoryRoot: !!js ctx.portfolioStartup.repositoryRoot
         scenario: !!js ctx.portfolioStartup.scenario
+        mock: !!js ctx.portfolioStartup.mock
         live: !!js ctx.portfolioStartup.live
         ledgerPath: !!js ctx.portfolioStartup.ledgerPath
         pythonExecutable: python3

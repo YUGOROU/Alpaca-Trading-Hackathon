@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from risk_engine import MarketData, Portfolio, Position
@@ -27,7 +28,9 @@ from .candidates import build_decision_context
 from .contracts import DecisionContext
 
 LIVE_SCENARIO_ID = "live"
+MOCK_SCENARIO_ID = "mock"
 DEFAULT_STORE_KEEP = 200  # cap the inputs store; live contexts are short-lived
+DEFAULT_CONTEXT_TTL_SECONDS = 300
 
 
 def count_hedge_contracts(positions, index_symbol: str = "SPY") -> int:
@@ -74,18 +77,23 @@ def has_open_income(positions) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _source_and_state():
+def _live_source_and_state():
+    """Build only a real Alpaca source for ``--live``.
+
+    A live request must never silently become a fixture-like mock cycle.  Tests
+    that need a mock inject it directly or use the explicit ``--mock`` command.
+    """
     from feed import StateStore
 
     have_creds = bool(os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_SECRET_KEY"))
-    if have_creds:
-        from feed import AlpacaDataSource
+    if not have_creds:
+        raise RuntimeError(
+            "--live requires ALPACA_API_KEY and ALPACA_SECRET_KEY; "
+            "use --mock or --scenario for non-live execution"
+        )
+    from feed import AlpacaDataSource
 
-        source = AlpacaDataSource()
-    else:
-        from feed import MockDataSource
-
-        source = MockDataSource()
+    source = AlpacaDataSource()
     state = StateStore(os.getenv("AGENT_STATE_PATH", "state/state.json"))
     return source, state
 
@@ -148,6 +156,9 @@ def save_context_inputs(
     expiry_days: int,
     current_contracts: int,
     income_open: bool = False,
+    input_provenance: dict | None = None,
+    execution_snapshot: dict | None = None,
+    scenario_id: str = LIVE_SCENARIO_ID,
     keep: int = DEFAULT_STORE_KEEP,
 ) -> None:
     """Append the inputs that produced `context_id`; keep only the last `keep`."""
@@ -158,11 +169,14 @@ def save_context_inputs(
     rows = [r for r in rows if r.get("context_id") != context_id]
     rows.append({
         "context_id": context_id,
+        "scenario_id": scenario_id,
         "portfolio": _portfolio_to_dict(portfolio),
         "market": _market_to_dict(market),
         "expiry_days": expiry_days,
         "current_contracts": current_contracts,
         "income_open": income_open,
+        "input_provenance": input_provenance,
+        "execution_snapshot": execution_snapshot,
     })
     rows = rows[-keep:]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,6 +212,9 @@ def build_live_context(
     expiry_days: int = 4,
     current_contracts: int | None = None,
     persist: bool = True,
+    source_kind: str = "alpaca_rest",
+    scenario_id: str = LIVE_SCENARIO_ID,
+    now: datetime | None = None,
 ) -> DecisionContext:
     """OBSERVE live data and produce the candidate context, persisting its inputs.
 
@@ -208,39 +225,98 @@ def build_live_context(
     from feed import observe
 
     if source is None or state is None:
-        source, state = _source_and_state()
+        source, state = _live_source_and_state()
+        source_kind = "alpaca_rest"
+    elif source_kind == "alpaca_rest":
+        # Dependency injection is used by offline tests.  Do not label such a
+        # context as a live Alpaca observation merely because it used the
+        # default argument.
+        from feed import MockDataSource
+        if isinstance(source, MockDataSource):
+            source_kind = "mock"
+    now = now or datetime.now(UTC)
+    ttl_seconds = int(os.getenv("AGENT_CONTEXT_TTL_SECONDS", str(DEFAULT_CONTEXT_TTL_SECONDS)))
+    if ttl_seconds <= 0:
+        raise RuntimeError("AGENT_CONTEXT_TTL_SECONDS must be positive")
+    provenance = {
+        "source": source_kind,
+        "observed_at": now.isoformat(),
+        "expires_at": (now + timedelta(seconds=ttl_seconds)).isoformat(),
+    }
     live_positions = source.positions()
     if current_contracts is None:
         current_contracts = count_hedge_contracts(live_positions, index_symbol)
     income_open = has_open_income(live_positions)
     portfolio, market = observe(source, state, index_symbol=index_symbol)
+    open_order_ids = None
+    if hasattr(source, "open_order_ids"):
+        open_order_ids = sorted(str(order_id) for order_id in source.open_order_ids())
+    execution_snapshot = {
+        "equity": portfolio.equity,
+        "positions": sorted((str(symbol), float(quantity)) for symbol, quantity, _price in live_positions if quantity),
+        "open_order_ids": open_order_ids,
+    }
     context = build_decision_context(
         portfolio,
         market,
-        scenario_id=LIVE_SCENARIO_ID,
+        scenario_id=scenario_id,
         current_contracts=current_contracts,
         income_open=income_open,
         expiry_days=expiry_days,
+        input_provenance=provenance,
     )
     if persist:
         save_context_inputs(
             context.context_id, portfolio, market,
             expiry_days=expiry_days, current_contracts=current_contracts,
             income_open=income_open,
+            input_provenance=provenance,
+            execution_snapshot=execution_snapshot,
+            scenario_id=scenario_id,
         )
     return context
 
 
-def rebuild_live_context(context_id: str) -> DecisionContext | None:
-    """Rebuild the exact context the model saw, from persisted inputs (for submit)."""
+def rebuild_observed_context(
+    context_id: str, *, expected_source: str, now: datetime | None = None
+) -> DecisionContext | None:
+    """Rebuild a fresh, provenance-matching observed context for submission."""
     row = load_context_inputs(context_id)
     if row is None:
+        return None
+    provenance = row.get("input_provenance")
+    if not provenance or provenance.get("source") != expected_source:
+        return None
+    try:
+        expires_at = datetime.fromisoformat(provenance["expires_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    now = now or datetime.now(UTC)
+    if expires_at <= now:
         return None
     return build_decision_context(
         _portfolio_from_dict(row["portfolio"]),
         _market_from_dict(row["market"]),
-        scenario_id=LIVE_SCENARIO_ID,
+        scenario_id=row.get("scenario_id", LIVE_SCENARIO_ID),
         current_contracts=row["current_contracts"],
         income_open=row.get("income_open", False),
         expiry_days=row["expiry_days"],
+        input_provenance=provenance,
+    )
+
+
+def rebuild_live_context(context_id: str, *, now: datetime | None = None) -> DecisionContext | None:
+    """Rebuild the exact fresh Alpaca context the model saw."""
+    return rebuild_observed_context(context_id, expected_source="alpaca_rest", now=now)
+
+
+def build_mock_context(*, state=None, now: datetime | None = None) -> DecisionContext:
+    """Build an explicit mock context; never use it as a live fallback."""
+    from feed import MockDataSource, StateStore
+
+    if state is None:
+        state = StateStore(os.getenv("AGENT_STATE_PATH", "state/state.json"))
+    return build_live_context(
+        source=MockDataSource(), state=state, source_kind="mock",
+        scenario_id=MOCK_SCENARIO_ID, now=now,
     )

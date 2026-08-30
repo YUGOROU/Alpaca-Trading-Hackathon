@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
-import { connectAlpacaOrders, placeGateOrders, fetchOptionChain } from './alpaca-orders.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -12,6 +11,7 @@ export function resolvePython(configured) {
 
 function modeArgs(config) {
   if (config.live) return ['--live']
+  if (config.mock) return ['--mock']
   if (!config.scenario) throw new Error('a fixed scenario is required when live mode is disabled')
   return ['--scenario', config.scenario]
 }
@@ -54,15 +54,9 @@ export function submitDecision(config, { context_id, candidate_id, reason }) {
   ])
 }
 
-export async function placeApprovedDecision(gate) {
-  const connection = await connectAlpacaOrders()
-  try {
-    const [puts, calls] = await Promise.all([
-      fetchOptionChain(connection.client, 'put'),
-      fetchOptionChain(connection.client, 'call'),
-    ])
-    return await placeGateOrders(connection.client, gate.orders || [], { ...puts, ...calls })
-  } finally {
-    await connection.close()
-  }
+// Operator-only preflight.  It is intentionally not registered as a model tool:
+// Python revalidates live broker state and writes submission_requested before any
+// order-capable MCP client can be opened.
+export function prepareHumanSubmission(config, decisionId) {
+  return bridge(config, ['prepare-submission', '--ledger', config.ledgerPath, '--decision-id', decisionId])
 }

@@ -11,10 +11,10 @@ export const inject = ['agentDefaultModel', 'agents', 'sessions']
 export const Config = Schema.object({
   repositoryRoot: Schema.string().required(),
   scenario: Schema.string(),
+  mock: Schema.boolean().default(false),
   live: Schema.boolean().default(false),
   ledgerPath: Schema.string().required(),
   pythonExecutable: Schema.string().default('python3'),
-  placeOrders: Schema.boolean().default(false),
   instruction: Schema.string().required(),
   heartbeat: Schema.boolean().default(false), // when true, portfolio-heartbeat owns the loop
 })
