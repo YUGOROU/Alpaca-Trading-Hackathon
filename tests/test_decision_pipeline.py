@@ -214,6 +214,18 @@ class DecisionPipelineTests(unittest.TestCase):
             )
             self.assertEqual(accepted["execution"]["state"], "accepted")
 
+    def test_resting_alpaca_statuses_normalize_to_accepted(self):
+        from feed.alpaca import AlpacaDataSource
+
+        class Order:
+            id = "broker-1"
+            status = "pending_new"
+
+        self.assertEqual(
+            AlpacaDataSource._normalized_order_status(Order()),
+            {"alpaca_order_id": "broker-1", "state": "accepted"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

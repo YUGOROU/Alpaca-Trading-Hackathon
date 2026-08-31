@@ -98,6 +98,34 @@ def run_executor(decision_id: str) -> dict:
     return json.loads(result.stdout)
 
 
+def record_timeout_uncertainty(decision_id: str) -> None:
+    """Persist client IDs if an external subprocess timeout interrupts Node.
+
+    The Node executor normally owns this transition.  ``subprocess.run`` can
+    terminate it after 180 seconds, however, so retain the idempotency key here
+    when submission_requested was already durably written.  If preparation had
+    not reached that state, the ledger rejects this no-op attempt.
+    """
+    try:
+        from agent.ledger import proposal_orders
+
+        client_order_ids = [
+            order.get("client_order_id") for order in proposal_orders(LEDGER, decision_id)
+        ]
+        if len(client_order_ids) != 1 or not isinstance(client_order_ids[0], str):
+            return
+        run_cli([
+            "record-submission-unknown", "--ledger", str(LEDGER),
+            "--decision-id", decision_id,
+            "--client-order-ids-json", json.dumps(client_order_ids),
+            "--reason", "human executor exceeded HTTP timeout",
+        ])
+    except Exception:
+        # Preserve the timeout response. A preflight-only timeout has no broker
+        # call to reconcile, and a concurrent state transition is never overwritten.
+        return
+
+
 PAGE = """<!doctype html><meta charset=utf-8><title>Paper Human Approval</title>
 <style>body{font:15px system-ui;max-width:1000px;margin:2rem auto;padding:0 1rem;background:#101417;color:#e9eef2}input,button{padding:.55rem;margin:.25rem}pre{white-space:pre-wrap;background:#192127;padding:1rem;border-radius:6px}.proposal{border:1px solid #40515d;margin:1rem 0;padding:1rem;border-radius:8px}</style>
 <h1>Paper Human Approval</h1><p>Every action is paper-only, authenticated, revalidated immediately, and written to the ledger.</p>
@@ -162,6 +190,10 @@ class ApprovalApiMixin:
         except (ValueError, json.JSONDecodeError) as error:
             self._json(HTTPStatus.BAD_REQUEST, {"error": str(error)}); return True
         except subprocess.TimeoutExpired:
+            if path.startswith("/api/proposals/") and path.endswith("/approve"):
+                decision_id = path.removeprefix("/api/proposals/").removesuffix("/approve").strip("/")
+                if DECISION_ID.fullmatch(decision_id):
+                    record_timeout_uncertainty(decision_id)
             self._json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "operation timed out; inspect the ledger before retrying"}); return True
         except Exception:
             self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal operation failure; inspect the ledger before retrying"}); return True

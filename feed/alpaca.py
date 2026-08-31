@@ -96,7 +96,7 @@ class AlpacaDataSource:
     def order_status_by_client_order_id(self, client_order_id: str) -> dict[str, str]:
         """Look up an uncertain write by the deterministic broker idempotency key."""
         return self._normalized_order_status(
-            self._trading.get_order_by_client_order_id(client_order_id)
+            self._trading.get_order_by_client_id(client_order_id)
         )
 
     @staticmethod
