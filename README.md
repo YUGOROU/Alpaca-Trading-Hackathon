@@ -306,17 +306,13 @@ invested; the rest is a cash sleeve for premium + margin.
 ```mermaid
 pie showData
     title Core book — target weights (% of equity)
-    "SPY" : 24
+    "SPY" : 33
     "Cash" : 20
-    "QQQ" : 11
-    "IWM" : 10
-    "DIA" : 9
-    "XLV" : 8
-    "XLF" : 7
-    "XLE" : 4
-    "NVDA" : 3
-    "AAPL" : 2
-    "MSFT" : 2
+    "QQQ" : 15
+    "IWM" : 14
+    "DIA" : 12
+    "AAPL" : 3
+    "MSFT" : 3
 ```
 
 Weights (not hard-coded share counts) are the single source of truth, so the same definition
