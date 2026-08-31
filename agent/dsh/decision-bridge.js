@@ -34,7 +34,7 @@ async function bridge(config, args) {
 }
 
 export function getDecisionContext(config) {
-  return bridge(config, ['context', ...modeArgs(config)])
+  return bridge(config, ['context', ...modeArgs(config), '--execution-mode', config.executionMode ?? 'human'])
 }
 
 // The model never receives the idempotency key.  It is a harness-owned value,
@@ -51,7 +51,23 @@ export function submitDecision(config, { context_id, candidate_id, reason }) {
     '--reason', reason,
     '--decision-id', decisionId(context_id, candidate_id),
     '--ledger', config.ledgerPath,
+    '--execution-mode', config.executionMode ?? 'human',
   ])
+}
+
+// This is not model-visible. The heartbeat can invoke it only after the
+// deterministic gate created an autonomous-paper proposal.
+export async function executeAutonomousOptionsOverlay(config, decisionId) {
+  if (config.executionMode !== 'autonomous-paper') {
+    throw new Error('autonomous options execution is not armed')
+  }
+  const { stdout } = await execFileAsync('node', [
+    `${config.repositoryRoot}/agent/dsh/human-executor.js`,
+    '--ledger', config.ledgerPath,
+    '--decision-id', decisionId,
+    '--execution-mode', 'autonomous-paper',
+  ], { cwd: config.repositoryRoot, encoding: 'utf8', maxBuffer: 1024 * 1024 })
+  return JSON.parse(stdout)
 }
 
 // Operator-only preflight.  It is intentionally not registered as a model tool:

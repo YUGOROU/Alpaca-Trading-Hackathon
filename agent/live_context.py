@@ -159,6 +159,7 @@ def save_context_inputs(
     input_provenance: dict | None = None,
     execution_snapshot: dict | None = None,
     scenario_id: str = LIVE_SCENARIO_ID,
+    execution_mode: str = "human",
     keep: int = DEFAULT_STORE_KEEP,
 ) -> None:
     """Append the inputs that produced `context_id`; keep only the last `keep`."""
@@ -177,6 +178,7 @@ def save_context_inputs(
         "income_open": income_open,
         "input_provenance": input_provenance,
         "execution_snapshot": execution_snapshot,
+        "execution_mode": execution_mode,
     })
     rows = rows[-keep:]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +216,7 @@ def build_live_context(
     persist: bool = True,
     source_kind: str = "alpaca_rest",
     scenario_id: str = LIVE_SCENARIO_ID,
+    execution_mode: str = "human",
     now: datetime | None = None,
 ) -> DecisionContext:
     """OBSERVE live data and produce the candidate context, persisting its inputs.
@@ -271,6 +274,7 @@ def build_live_context(
         income_open=income_open,
         expiry_days=expiry_days,
         input_provenance=provenance,
+        execution_mode=execution_mode,
     )
     if persist:
         save_context_inputs(
@@ -280,6 +284,7 @@ def build_live_context(
             input_provenance=provenance,
             execution_snapshot=execution_snapshot,
             scenario_id=scenario_id,
+            execution_mode=execution_mode,
         )
     return context
 
@@ -309,6 +314,7 @@ def rebuild_observed_context(
         income_open=row.get("income_open", False),
         expiry_days=row["expiry_days"],
         input_provenance=provenance,
+        execution_mode=row.get("execution_mode", "human"),
     )
 
 
@@ -317,7 +323,7 @@ def rebuild_live_context(context_id: str, *, now: datetime | None = None) -> Dec
     return rebuild_observed_context(context_id, expected_source="alpaca_rest", now=now)
 
 
-def build_mock_context(*, state=None, now: datetime | None = None) -> DecisionContext:
+def build_mock_context(*, state=None, now: datetime | None = None, execution_mode: str = "human") -> DecisionContext:
     """Build an explicit mock context; never use it as a live fallback."""
     from feed import MockDataSource, StateStore
 
@@ -325,5 +331,5 @@ def build_mock_context(*, state=None, now: datetime | None = None) -> DecisionCo
         state = StateStore(os.getenv("AGENT_STATE_PATH", "state/state.json"))
     return build_live_context(
         source=MockDataSource(), state=state, source_kind="mock",
-        scenario_id=MOCK_SCENARIO_ID, now=now,
+        scenario_id=MOCK_SCENARIO_ID, now=now, execution_mode=execution_mode,
     )

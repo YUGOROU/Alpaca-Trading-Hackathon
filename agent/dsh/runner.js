@@ -17,6 +17,7 @@ export const Config = Schema.object({
   pythonExecutable: Schema.string().default('python3'),
   instruction: Schema.string().required(),
   heartbeat: Schema.boolean().default(false), // when true, portfolio-heartbeat owns the loop
+  executionMode: Schema.string().default('human'),
 })
 
 function outcome(events, firstSeq) {

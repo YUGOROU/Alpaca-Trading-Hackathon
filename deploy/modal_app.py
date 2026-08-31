@@ -85,7 +85,7 @@ approval_secret = modal.Secret.from_name(APPROVAL_SECRET_NAME, required_keys=["H
     secrets=[hf_token_secret, alpaca_paper_secret, approval_secret],
     # HF_MODEL_ID is injected as non-secret config (not part of the
     # credentials Secret). startup.sh and the heartbeat require it as an env var.
-    env={"HF_MODEL_ID": MODEL_ID},
+    env={"HF_MODEL_ID": MODEL_ID, "PAPER_EXECUTION_MODE": "autonomous-options-overlay"},
 )
 class HeartbeatServer:
     """Always-on CPU container whose entrypoint owns the DSH heartbeat process."""

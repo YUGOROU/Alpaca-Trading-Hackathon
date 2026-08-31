@@ -23,6 +23,7 @@ from .ledger import (
     proposal_context_id,
     proposal_orders,
     record_broker_update,
+    record_autonomous_authorization,
     record_dry_run,
     record_human_approval,
     record_human_rejection,
@@ -66,6 +67,7 @@ def main() -> int:
 
     context_parser = sub.add_parser("context")
     _add_mode(context_parser)
+    context_parser.add_argument("--execution-mode", choices=("human", "autonomous-paper"), default="human")
 
     submit_parser = sub.add_parser("submit")
     _add_mode(submit_parser)
@@ -80,6 +82,10 @@ def main() -> int:
     approve_parser.add_argument("--ledger", required=True)
     approve_parser.add_argument("--decision-id", required=True)
     approve_parser.add_argument("--approved-by", required=True)
+
+    autonomous_parser = sub.add_parser("authorize-autonomous")
+    autonomous_parser.add_argument("--ledger", required=True)
+    autonomous_parser.add_argument("--decision-id", required=True)
 
     reject_parser = sub.add_parser("reject")
     reject_parser.add_argument("--ledger", required=True)
@@ -115,6 +121,10 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "approve":
         row = record_human_approval(args.ledger, args.decision_id, approved_by=args.approved_by)
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "authorize-autonomous":
+        row = record_autonomous_authorization(args.ledger, args.decision_id)
         print(json.dumps(row, sort_keys=True))
         return 0
     if args.command == "reject":
@@ -192,7 +202,17 @@ def main() -> int:
     scenario_id = "live" if args.live else "mock" if args.mock else args.scenario
 
     if args.command == "context":
-        context = build_live_context() if args.live else build_mock_context() if args.mock else _scenario_context(args.scenario)
+        if args.live:
+            context = build_live_context(execution_mode=args.execution_mode)
+        elif args.mock:
+            context = build_mock_context(execution_mode=args.execution_mode)
+        else:
+            fixture = get_scenario(args.scenario)
+            context = build_decision_context(
+                fixture.portfolio, fixture.market, scenario_id=args.scenario,
+                current_contracts=fixture.current_contracts, income_open=fixture.income_open,
+                execution_mode=args.execution_mode,
+            )
         print(json.dumps(context.to_model_dict(), sort_keys=True))
         return 0
 

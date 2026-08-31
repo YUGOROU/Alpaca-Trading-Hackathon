@@ -1,4 +1,4 @@
-import { getDecisionContext, submitDecision } from './decision-bridge.js'
+import { executeAutonomousOptionsOverlay, getDecisionContext, submitDecision } from './decision-bridge.js'
 
 export const HF_CHAT_COMPLETIONS_URL = 'https://router.huggingface.co/v1/chat/completions'
 export const PROVIDER_TIMEOUT_MS = 30_000
@@ -220,6 +220,7 @@ export async function runModelNativeDecision(config, {
   modelId = process.env.HF_MODEL_ID,
   getContext = getDecisionContext,
   submit = submitDecision,
+  executeAutonomous = executeAutonomousOptionsOverlay,
 } = {}) {
   if (!token) throw new Error('HF_TOKEN is required for the model-native adapter')
   const profile = modelProfile(modelId ?? '')
@@ -245,6 +246,18 @@ export async function runModelNativeDecision(config, {
   let value
   try { value = await submit(config, phaseTwo.call.arguments) } catch {
     return { status: 'failed', failure: 'tool_dispatch_error', metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
+  }
+  if (config.executionMode === 'autonomous-paper' && value?.gate?.status === 'approved_for_dry_run') {
+    const orders = value?.gate?.orders
+    if (!Array.isArray(orders) || orders.length === 0) {
+      return { status: 'completed', value, metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
+    }
+    try {
+      const execution = await executeAutonomous(config, value.decision_id)
+      return { status: 'completed', value, execution, metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
+    } catch {
+      return { status: 'failed', failure: 'autonomous_execution_failed', metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
+    }
   }
   return { status: 'completed', value, metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
 }

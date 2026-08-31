@@ -89,4 +89,5 @@ def validate_decision(context: DecisionContext, decision: AgentDecision) -> Gate
         candidate_id=decision.candidate_id,
         reasons=("candidate_and_limits_valid",),
         orders=_orders(context, candidate),
+        human_approval_required=context.execution_mode == "human",
     )

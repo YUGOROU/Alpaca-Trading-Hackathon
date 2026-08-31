@@ -30,11 +30,12 @@ on the `liquidity-leak-dsh-state` Volume is a second safeguard against duplicate
 owners.
 
 The persisted DSH profile, sessions, contexts, and ledger survive container
-replacement on the Volume. Deployment starts the LLM heartbeat with paper-only
-read access; a paper write remains unavailable until an authenticated operator
-approves a proposal and its snapshot passes fresh revalidation. The initial UI
-allows exactly one approved options order per submission, making the first manual
-paper-order validation a bounded operation.
+replacement on the Volume. The deployed heartbeat is armed only for one `SPY`
+options-overlay order per eligible live cycle: a protective put, covered call, or
+iron condor. It cannot place an equity/core-book order, a multi-order batch, or a
+`sell_to_close` order. Before every write it records autonomous-policy provenance,
+revalidates the fresh live snapshot, and keeps the broker client order ID for
+reconciliation. The authenticated UI remains available for human-mode proposals.
 
 After deployment, run the non-mutating paper-read probe before approving any
 proposal:

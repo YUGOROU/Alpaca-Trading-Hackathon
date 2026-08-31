@@ -19,7 +19,7 @@ function command() {
     .option('--live', 'observe the live Alpaca paper account instead of a fixture', false)
     .option('--heartbeat', 'run continuously on an interval instead of one shot', false)
     .option('--interval <ms>', 'heartbeat interval in milliseconds', String(1_800_000))
-    .option('--place', 'deprecated; autonomous placement is not armed in this release', false)
+    .option('--place', 'deprecated; autonomous placement is controlled by PAPER_EXECUTION_MODE', false)
     .option('--ledger <path>', 'canonical proposal JSONL ledger', '.agent/decisions.jsonl')
     .argument('[instruction...]', 'decision objective')
 }
@@ -32,7 +32,7 @@ export function apply(ctx) {
     if (Number(Boolean(options.live)) + Number(Boolean(options.mock)) + Number(Boolean(options.scenario)) !== 1) {
       program.error('error: provide exactly one of --scenario <name>, --mock, or --live')
     }
-    if (options.place) program.error('error: --place is not armed; use Human Approval mode')
+    if (options.place) program.error('error: --place is deprecated; use PAPER_EXECUTION_MODE=autonomous-options-overlay')
     if (options.scenario && ![
       'calm', 'elevated', 'stressed', 'near_risk_limit', 'near_coverage_limit',
       'suboptimal_alternative', 'tradeoff_choice', 'untrusted_data',
@@ -50,7 +50,9 @@ export function apply(ctx) {
       live: Boolean(options.live),
       heartbeat: Boolean(options.heartbeat),
       intervalMs,
-      placeOrders: false,
+      executionMode: process.env.PAPER_EXECUTION_MODE === 'autonomous-options-overlay' && options.live && options.heartbeat
+        ? 'autonomous-paper'
+        : 'human',
       ledgerPath: resolve(options.ledger),
       instruction,
     })

@@ -71,12 +71,13 @@ def _candidate(
     )
 
 
-def _context_id(scenario_id: str, snapshot, candidate_ids: list[str]) -> str:
+def _context_id(scenario_id: str, snapshot, candidate_ids: list[str], execution_mode: str) -> str:
     payload = json.dumps(
         {
             "scenario_id": scenario_id,
             "snapshot": asdict(snapshot),
             "candidate_ids": candidate_ids,
+            "execution_mode": execution_mode,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -93,6 +94,7 @@ def build_decision_context(
     income_open: bool = False,
     expiry_days: int = 4,
     input_provenance: dict | None = None,
+    execution_mode: str = "human",
 ) -> DecisionContext:
     """Create only choices that pass the coarse deterministic risk envelope.
 
@@ -103,6 +105,8 @@ def build_decision_context(
     `income_open` (an overlay already on from a prior cycle) suppresses the
     harvest_income choice, so a periodic loop never stacks a fresh condor every tick.
     """
+    if execution_mode not in {"human", "autonomous-paper"}:
+        raise ValueError("unknown execution mode")
     snapshot = assess(portfolio, market)
     candidates: list[DecisionCandidate] = []
 
@@ -221,7 +225,7 @@ def build_decision_context(
     # A live context must bind the provenance timestamps as well as the risk
     # snapshot.  Rebuilding from the persisted inputs therefore retains the
     # same ID, while a newly observed snapshot gets a distinct decision ID.
-    context_id = _context_id(scenario_id, snapshot, ids)
+    context_id = _context_id(scenario_id, snapshot, ids, execution_mode)
     if input_provenance is not None:
         provenance_bytes = json.dumps(input_provenance, sort_keys=True, separators=(",", ":"))
         context_id = sha256(f"{context_id}:{provenance_bytes}".encode()).hexdigest()[:20]
@@ -231,4 +235,5 @@ def build_decision_context(
         snapshot=snapshot,
         candidates=tuple(candidates),
         input_provenance=input_provenance,
+        execution_mode=execution_mode,
     )
