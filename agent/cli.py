@@ -96,6 +96,7 @@ def main() -> int:
     prepare_parser.add_argument("--ledger", required=True)
     prepare_parser.add_argument("--decision-id", required=True)
     prepare_parser.add_argument("--require-exactly-one-order", action="store_true")
+    prepare_parser.add_argument("--autonomous-options-overlay", action="store_true")
 
     broker_parser = sub.add_parser("record-broker-update")
     broker_parser.add_argument("--ledger", required=True)
@@ -141,6 +142,16 @@ def main() -> int:
                 raise ValueError("the initial human executor requires exactly one gate order")
             if orders[0].get("intent") == "sell_to_close":
                 raise ValueError("sell_to_close requires a recorded held OCC contract and is not yet executable")
+        if args.autonomous_options_overlay:
+            if len(orders) != 1:
+                raise ValueError("autonomous options execution requires exactly one gate order")
+            order = orders[0]
+            if order.get("structure") not in {"protective_put", "covered_call", "iron_condor"}:
+                raise ValueError("autonomous execution permits only known options-overlay structures")
+            if order.get("symbol") != "SPY":
+                raise ValueError("autonomous options execution permits only SPY overlays")
+            if order.get("intent") not in {"buy_to_open", "sell_to_open"}:
+                raise ValueError("autonomous options execution never closes or trades an equity position")
         source, _state = _live_source_and_state()
         # The canonical proposal supplies the only admissible context/order set.
         context_id = proposal_context_id(args.ledger, args.decision_id)

@@ -88,6 +88,7 @@ async function main() {
     prepared = python([
       'prepare-submission', '--ledger', ledger, '--decision-id', decisionId,
       '--require-exactly-one-order',
+      ...(executionMode === 'autonomous-paper' ? ['--autonomous-options-overlay'] : []),
     ])
     if (executionMode === 'autonomous-paper') assertAutonomousOptionsOverlay(prepared.orders)
     connection = await connectAlpacaOrders(process.env)
