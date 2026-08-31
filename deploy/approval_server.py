@@ -153,7 +153,7 @@ class ApprovalApiMixin:
 
     def handle_approval_get(self) -> bool:
         path = urlparse(self.path).path
-        if path == "/":
+        if path == "/approval":
             payload = PAGE.encode(); self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload))); self.end_headers(); self.wfile.write(payload); return True
         if path not in {"/api/proposals", "/api/core-book"}:

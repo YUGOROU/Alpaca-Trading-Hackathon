@@ -10,6 +10,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from approval_server import ApprovalApiMixin, rows
+from public_monitor import snapshot
+
+MONITOR_PAGE = Path(__file__).with_name("monitor_ui.html")
 
 
 def heartbeat_process() -> subprocess.Popen[bytes]:
@@ -35,12 +38,29 @@ def heartbeat_process() -> subprocess.Popen[bytes]:
 def serve(process: subprocess.Popen[bytes]) -> None:
     class Handler(ApprovalApiMixin, BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 -- HTTP method spelling
+            path = self.path.split("?", 1)[0]
+            running = process.poll() is None
+            input_ready = bool(os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_SECRET_KEY"))
+            if path == "/":
+                payload = MONITOR_PAGE.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if path == "/api/monitor":
+                self._json(200 if running else 503, snapshot(
+                    heartbeat_running=running,
+                    input_ready=input_ready,
+                    ledger_rows=rows(),
+                ))
+                return
             if self.path not in {"/healthz", "/statusz"}:
                 if self.handle_approval_get():
                     return
                 self.send_error(404)
                 return
-            running = process.poll() is None
             if self.path == "/statusz":
                 ledger_rows = rows()
                 last_event = ledger_rows[-1].get("event") if ledger_rows else None

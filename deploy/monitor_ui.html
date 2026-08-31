@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Paper-only autonomous options-overlay agent public monitor">
+  <title>Agent Monitor</title>
+  <style>
+    :root { --blue:#1a73e8; --blue-soft:#e8f0fe; --ink:#202124; --muted:#5f6368; --line:#e8eaed; --wash:#f8faff; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#fff; color:var(--ink); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; -webkit-font-smoothing:antialiased; }
+    main { max-width:1040px; padding:28px 20px 48px; margin:auto; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; padding-bottom:24px; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:18px; letter-spacing:-.02em; }
+    .eyebrow, .label { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+    .eyebrow { margin:0 0 4px; }
+    .live { color:var(--blue); font-size:12px; font-weight:700; white-space:nowrap; }
+    .dot { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:var(--blue); animation:pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity:.35; } }
+    .hero { padding:30px 0 24px; border-bottom:1px solid var(--line); }
+    .hero h2 { max-width:720px; margin:7px 0 8px; font-size:clamp(25px,5vw,42px); line-height:1.17; letter-spacing:-.045em; }
+    .hero p { max-width:650px; margin:0; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0 12px; }
+    .card { min-height:126px; padding:18px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .metric { margin-top:17px; font-size:30px; font-weight:700; letter-spacing:-.04em; line-height:1; }
+    .hint { margin:7px 0 0; color:var(--muted); font-size:12px; }
+    .section { display:grid; grid-template-columns:1.1fr .9fr; gap:12px; margin-top:12px; }
+    .panel { border:1px solid var(--line); border-radius:8px; padding:20px; }
+    .current { border-color:#d2e3fc; background:var(--wash); }
+    .state { margin:12px 0 4px; color:var(--blue); font-size:22px; font-weight:700; letter-spacing:-.025em; }
+    .log { list-style:none; padding:0; margin:10px 0 0; }
+    .log li { display:grid; grid-template-columns:82px 1fr; gap:10px; padding:12px 0; border-top:1px solid var(--line); font-size:13px; }
+    .time { color:var(--muted); font-variant-numeric:tabular-nums; }
+    .empty { color:var(--muted); font-size:13px; padding:22px 0 6px; }
+    footer { margin-top:16px; color:var(--muted); font-size:12px; }
+    @media (max-width:720px) { main{padding-top:20px}.grid{grid-template-columns:repeat(2,1fr)}.section{grid-template-columns:1fr}header{padding-bottom:18px}.hero{padding-top:24px} }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">Public / paper only</p><h1>Agent decision monitor</h1></div>
+      <div class="live"><span class="dot"></span><span id="heartbeat">接続中</span></div>
+    </header>
+    <section class="hero" aria-live="polite">
+      <p class="eyebrow">Autonomous options overlay</p>
+      <h2 id="headline">判断ログを同期しています</h2>
+      <p>Core Bookの増減ではなく、固定された安全ゲートの下で、Agentがどのように判断・停止・送信したかを表示します。</p>
+    </section>
+    <section class="grid" aria-label="Agent performance">
+      <article class="card"><div class="label">Decision cycles</div><div class="metric" id="decisions">—</div><p class="hint">記録済みの判断</p></article>
+      <article class="card"><div class="label">Gate passed</div><div class="metric" id="passed">—</div><p class="hint">安全条件を通過</p></article>
+      <article class="card"><div class="label">Policy stops</div><div class="metric" id="stopped">—</div><p class="hint">安全のため停止</p></article>
+      <article class="card"><div class="label">Overlay sent</div><div class="metric" id="submitted">—</div><p class="hint">自律 paper 送信</p></article>
+    </section>
+    <section class="section">
+      <article class="panel current"><div class="label">Latest decision</div><div class="state" id="latest-state">まだ記録がありません</div><p class="hint" id="latest-detail">次のheartbeatで安全な判断が記録されると更新されます。</p></article>
+      <article class="panel"><div class="label">Live activity</div><ol class="log" id="activity"><li class="empty">公開できる活動ログはまだありません。</li></ol></article>
+    </section>
+    <footer>公開ビューは読み取り専用です。注文・ポジション・承認操作・識別子は表示しません。<span id="updated"></span></footer>
+  </main>
+  <script>
+    const text = (id, value) => { document.getElementById(id).textContent = value; };
+    const formatTime = (iso) => iso ? new Intl.DateTimeFormat('ja-JP', { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'Asia/Tokyo' }).format(new Date(iso)) : '—';
+    function render(data) {
+      text('heartbeat', data.service.heartbeat === 'running' ? '稼働中' : '停止中');
+      text('decisions', String(data.performance.decisions_recorded));
+      text('passed', String(data.performance.gate_passed));
+      text('stopped', String(data.performance.policy_stops));
+      text('submitted', String(data.performance.autonomous_submissions));
+      const latest = data.latest;
+      text('headline', latest ? latest.decision : '安全な判断を待機中');
+      text('latest-state', latest ? latest.state : 'まだ記録がありません');
+      text('latest-detail', latest ? `${formatTime(latest.timestamp)} JST ・ ${data.service.market_data}` : `heartbeat ${data.service.heartbeat === 'running' ? 'は稼働中です' : 'は停止しています'}。`);
+      const list = document.getElementById('activity'); list.replaceChildren();
+      if (!data.activity.length) { const item=document.createElement('li'); item.className='empty'; item.textContent='公開できる活動ログはまだありません。'; list.append(item); }
+      data.activity.forEach(item => { const row=document.createElement('li'), time=document.createElement('span'), detail=document.createElement('span'); time.className='time'; time.textContent=formatTime(item.timestamp); detail.textContent=`${item.decision} — ${item.state}`; row.append(time,detail); list.append(row); });
+      text('updated', ` 最終更新 ${formatTime(data.generated_at)} JST`);
+    }
+    async function refresh() { try { const response=await fetch('/api/monitor', { cache:'no-store' }); if (!response.ok) throw new Error('monitor unavailable'); render(await response.json()); } catch { text('heartbeat','一時的に接続できません'); } }
+    refresh(); window.setInterval(refresh, 30000);
+  </script>
+</body>
+</html>
