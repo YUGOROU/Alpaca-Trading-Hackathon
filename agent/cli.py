@@ -12,13 +12,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 
 from dataclasses import replace
 
 from .candidates import build_decision_context
 from .contracts import AgentDecision, GateResult, validate_execution_mode
 from .gate import validate_decision
-from .ledger import proposal_context_id, proposal_orders, record_dry_run, record_human_approval, record_submission_requested
+from .ledger import (
+    proposal_context_id,
+    proposal_orders,
+    record_broker_update,
+    record_dry_run,
+    record_human_approval,
+    record_human_rejection,
+    record_submission_failure,
+    record_submission_unknown,
+    record_submission_requested,
+)
 from .live_context import _live_source_and_state, build_live_context, build_mock_context, rebuild_live_context, rebuild_observed_context
 from .revalidation import revalidate_live_context
 from .scenarios import get_scenario
@@ -70,16 +81,56 @@ def main() -> int:
     approve_parser.add_argument("--decision-id", required=True)
     approve_parser.add_argument("--approved-by", required=True)
 
+    reject_parser = sub.add_parser("reject")
+    reject_parser.add_argument("--ledger", required=True)
+    reject_parser.add_argument("--decision-id", required=True)
+    reject_parser.add_argument("--rejected-by", required=True)
+
     prepare_parser = sub.add_parser("prepare-submission")
     prepare_parser.add_argument("--ledger", required=True)
     prepare_parser.add_argument("--decision-id", required=True)
+    prepare_parser.add_argument("--require-exactly-one-order", action="store_true")
+
+    broker_parser = sub.add_parser("record-broker-update")
+    broker_parser.add_argument("--ledger", required=True)
+    broker_parser.add_argument("--decision-id", required=True)
+    broker_parser.add_argument("--state", required=True)
+    broker_parser.add_argument("--broker-orders-json", required=True)
+
+    failure_parser = sub.add_parser("record-submission-failure")
+    failure_parser.add_argument("--ledger", required=True)
+    failure_parser.add_argument("--decision-id", required=True)
+    failure_parser.add_argument("--reason", required=True)
+
+    unknown_parser = sub.add_parser("record-submission-unknown")
+    unknown_parser.add_argument("--ledger", required=True)
+    unknown_parser.add_argument("--decision-id", required=True)
+    unknown_parser.add_argument("--client-order-ids-json", required=True)
+    unknown_parser.add_argument("--reason", required=True)
+
+    reconcile_parser = sub.add_parser("reconcile")
+    reconcile_parser.add_argument("--ledger", required=True)
+    reconcile_parser.add_argument("--decision-id", required=True)
 
     args = parser.parse_args()
     if args.command == "approve":
         row = record_human_approval(args.ledger, args.decision_id, approved_by=args.approved_by)
         print(json.dumps(row, sort_keys=True))
         return 0
+    if args.command == "reject":
+        row = record_human_rejection(args.ledger, args.decision_id, rejected_by=args.rejected_by)
+        print(json.dumps(row, sort_keys=True))
+        return 0
     if args.command == "prepare-submission":
+        orders = proposal_orders(args.ledger, args.decision_id)
+        # Validate the executor's bounded shape before reserving a submission
+        # transition. A hold/no-order or multi-order proposal remains approvable
+        # and reviewable instead of becoming an unrecoverable submission request.
+        if args.require_exactly_one_order:
+            if len(orders) != 1:
+                raise ValueError("the initial human executor requires exactly one gate order")
+            if orders[0].get("intent") == "sell_to_close":
+                raise ValueError("sell_to_close requires a recorded held OCC contract and is not yet executable")
         source, _state = _live_source_and_state()
         # The canonical proposal supplies the only admissible context/order set.
         context_id = proposal_context_id(args.ledger, args.decision_id)
@@ -88,7 +139,54 @@ def main() -> int:
             print(json.dumps(check, sort_keys=True))
             return 2
         event = record_submission_requested(args.ledger, args.decision_id, revalidation=check)
-        print(json.dumps({"event": event, "orders": proposal_orders(args.ledger, args.decision_id)}, sort_keys=True))
+        print(json.dumps({"event": event, "orders": orders}, sort_keys=True))
+        return 0
+    if args.command == "record-broker-update":
+        orders = json.loads(args.broker_orders_json)
+        if not isinstance(orders, list):
+            raise ValueError("broker_orders_json must encode a list")
+        row = record_broker_update(
+            args.ledger, args.decision_id, state=args.state, broker_orders=orders
+        )
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "record-submission-failure":
+        row = record_submission_failure(args.ledger, args.decision_id, reason=args.reason)
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "record-submission-unknown":
+        client_order_ids = json.loads(args.client_order_ids_json)
+        if not isinstance(client_order_ids, list):
+            raise ValueError("client_order_ids_json must encode a list")
+        row = record_submission_unknown(
+            args.ledger, args.decision_id, client_order_ids=client_order_ids, reason=args.reason
+        )
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "reconcile":
+        rows = [json.loads(line) for line in Path(args.ledger).read_text().splitlines() if line.strip()]
+        broker = next(
+            (row for row in reversed(rows) if row.get("decision_id") == args.decision_id and row.get("broker_orders")),
+            None,
+        )
+        source, _state = _live_source_and_state()
+        if broker is not None:
+            observed = [source.order_status(order["alpaca_order_id"]) for order in broker["broker_orders"]]
+        else:
+            unknown = next(
+                (row for row in reversed(rows) if row.get("decision_id") == args.decision_id and row.get("event") == "submission_unknown"),
+                None,
+            )
+            if unknown is None:
+                raise ValueError("no broker order ids or uncertain submission keys recorded for decision")
+            observed = [source.order_status_by_client_order_id(value) for value in unknown["submission"]["client_order_ids"]]
+        states = {order["state"] for order in observed}
+        if len(states) != 1 or next(iter(states)) not in {"accepted", "partially_filled", "filled", "rejected", "canceled", "expired"}:
+            raise ValueError(f"unreconcilable broker statuses: {sorted(states)}")
+        row = record_broker_update(
+            args.ledger, args.decision_id, state=next(iter(states)), broker_orders=observed
+        )
+        print(json.dumps(row, sort_keys=True))
         return 0
 
     scenario_id = "live" if args.live else "mock" if args.mock else args.scenario

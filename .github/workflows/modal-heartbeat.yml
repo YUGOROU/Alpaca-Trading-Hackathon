@@ -19,6 +19,9 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       HF_MODEL_ID: ${{ inputs.hf_model_id }}
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      HUMAN_APPROVAL_TOKEN: ${{ secrets.HUMAN_APPROVAL_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,5 +29,17 @@ jobs:
           python-version: "3.12"
       - name: Install Modal CLI
         run: python -m pip install --upgrade "modal==1.5.4"
+      - name: Refresh paper-only Alpaca Secret
+        run: |
+          test -n "$ALPACA_API_KEY"
+          test -n "$ALPACA_SECRET_KEY"
+          modal secret create --force alpaca-paper \
+            ALPACA_API_KEY="$ALPACA_API_KEY" \
+            ALPACA_SECRET_KEY="$ALPACA_SECRET_KEY"
+      - name: Refresh Human Approval authentication Secret
+        run: |
+          test -n "$HUMAN_APPROVAL_TOKEN"
+          modal secret create --force human-approval-auth \
+            HUMAN_APPROVAL_TOKEN="$HUMAN_APPROVAL_TOKEN"
       - name: Deploy the durable heartbeat app
         run: modal deploy --strategy recreate deploy/modal_app.py

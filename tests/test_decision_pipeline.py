@@ -11,6 +11,8 @@ from agent.ledger import (
     record_broker_update,
     record_dry_run,
     record_human_approval,
+    record_human_rejection,
+    record_submission_unknown,
     record_submission_requested,
 )
 from agent.scenarios import get_scenario
@@ -161,6 +163,18 @@ class DecisionPipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "only approved proposals"):
                 record_human_approval(path, "rejected", approved_by="operator-1")
 
+    def test_human_rejection_is_terminal(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            rejection = record_human_rejection(path, "decision-1", rejected_by="operator-1")
+            self.assertEqual(rejection["execution"]["state"], "rejected")
+            with self.assertRaisesRegex(ValueError, "different approval|proposed"):
+                record_human_approval(path, "decision-1", approved_by="operator-1")
+
     def test_submission_lifecycle_requires_approval_and_matching_revalidation(self):
         ctx = context("elevated")
         decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
@@ -179,6 +193,38 @@ class DecisionPipelineTests(unittest.TestCase):
             )
             self.assertEqual(accepted["broker_orders"][0]["alpaca_order_id"], "broker-1")
             self.assertEqual(execution_state(path, "decision-1")["state"], "accepted")
+
+    def test_uncertain_submission_can_be_reconciled_by_a_later_broker_update(self):
+        ctx = context("elevated")
+        decision = AgentDecision(ctx.context_id, "hold", "Remain in the current posture.")
+        result = validate_decision(ctx, decision)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "decisions.jsonl"
+            record_dry_run(path, "decision-1", "elevated", decision, result)
+            record_human_approval(path, "decision-1", approved_by="operator-1")
+            record_submission_requested(path, "decision-1", revalidation={
+                "ok": True, "context_id": ctx.context_id, "equity": 100.0, "open_order_ids": [],
+            })
+            unknown = record_submission_unknown(
+                path, "decision-1", client_order_ids=["dry-client-1"], reason="MCP response missing id",
+            )
+            self.assertEqual(unknown["execution"]["state"], "submission_unknown")
+            accepted = record_broker_update(
+                path, "decision-1", state="accepted", broker_orders=[{"alpaca_order_id": "broker-1"}],
+            )
+            self.assertEqual(accepted["execution"]["state"], "accepted")
+
+    def test_resting_alpaca_statuses_normalize_to_accepted(self):
+        from feed.alpaca import AlpacaDataSource
+
+        class Order:
+            id = "broker-1"
+            status = "pending_new"
+
+        self.assertEqual(
+            AlpacaDataSource._normalized_order_status(Order()),
+            {"alpaca_order_id": "broker-1", "state": "accepted"},
+        )
 
 
 if __name__ == "__main__":
