@@ -22,7 +22,7 @@ class PublicMonitorTests(unittest.TestCase):
         result = snapshot(heartbeat_running=True, input_ready=True, ledger_rows=ledger)
         rendered = str(result)
         self.assertEqual(result["performance"], {"decisions_recorded": 1, "gate_passed": 1, "gate_blocked": 0, "autonomous_submissions": 1, "policy_stops": 0})
-        self.assertEqual(result["latest"], {"timestamp": "2026-08-31T00:01:00+00:00", "decision": "保護ヘッジを評価", "state": "paper 注文を受付"})
+        self.assertEqual(result["latest"], {"timestamp": "2026-08-31T00:01:00+00:00", "decision": "Evaluate protective hedge", "state": "Paper order accepted"})
         for secret in ("private model chain", "private-context", "private-order", "private-operator", "private-broker-id", "99"):
             self.assertNotIn(secret, rendered)
 
@@ -32,3 +32,10 @@ class PublicMonitorTests(unittest.TestCase):
         ])
         self.assertEqual(result["performance"]["decisions_recorded"], 0)
         self.assertIsNone(result["latest"])
+
+    def test_japanese_projection_uses_only_the_same_safe_fields(self) -> None:
+        result = snapshot(heartbeat_running=True, input_ready=True, language="ja", ledger_rows=[
+            {"event": "proposal", "decision_id": "safe", "timestamp": "2026-08-31T00:00:00+00:00", "decision": {"candidate_id": "hold"}, "gate": {"status": "approved_for_dry_run"}, "execution": {"mode": "human", "state": "proposed"}},
+        ])
+        self.assertEqual(result["language"], "ja")
+        self.assertEqual(result["latest"], {"timestamp": "2026-08-31T00:00:00+00:00", "decision": "監視を継続", "state": "gate 通過・待機中"})

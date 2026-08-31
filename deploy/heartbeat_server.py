@@ -8,6 +8,7 @@ import signal
 import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from approval_server import ApprovalApiMixin, rows
 from public_monitor import snapshot
@@ -38,11 +39,13 @@ def heartbeat_process() -> subprocess.Popen[bytes]:
 def serve(process: subprocess.Popen[bytes]) -> None:
     class Handler(ApprovalApiMixin, BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 -- HTTP method spelling
-            path = self.path.split("?", 1)[0]
+            request = urlparse(self.path)
+            path = request.path
             running = process.poll() is None
             input_ready = bool(os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_SECRET_KEY"))
-            if path == "/":
-                payload = MONITOR_PAGE.read_bytes()
+            if path in {"/", "/ja"}:
+                language = "ja" if path == "/ja" else "en"
+                payload = MONITOR_PAGE.read_text(encoding="utf-8").replace('lang="en"', f'lang="{language}"', 1).encode()
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(payload)))
@@ -50,10 +53,12 @@ def serve(process: subprocess.Popen[bytes]) -> None:
                 self.wfile.write(payload)
                 return
             if path == "/api/monitor":
+                language = parse_qs(request.query).get("lang", ["en"])[0]
                 self._json(200 if running else 503, snapshot(
                     heartbeat_running=running,
                     input_ready=input_ready,
                     ledger_rows=rows(),
+                    language=language,
                 ))
                 return
             if self.path not in {"/healthz", "/statusz"}:

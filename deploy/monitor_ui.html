@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ja">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Paper-only autonomous options-overlay agent public monitor">
+  <meta name="description" content="Public monitor for a paper-only autonomous options-overlay agent">
   <title>Agent Monitor</title>
   <style>
     :root { --blue:#1a73e8; --blue-soft:#e8f0fe; --ink:#202124; --muted:#5f6368; --line:#e8eaed; --wash:#f8faff; }
@@ -39,45 +39,49 @@
 <body>
   <main>
     <header>
-      <div><p class="eyebrow">Public / paper only</p><h1>Agent decision monitor</h1></div>
-      <div class="live"><span class="dot"></span><span id="heartbeat">接続中</span></div>
+      <div><p class="eyebrow" data-copy="public">Public / paper only</p><h1 data-copy="title">Agent decision monitor</h1></div>
+      <div class="live"><span class="dot"></span><span id="heartbeat" data-copy="connecting">Connecting</span></div>
     </header>
     <section class="hero" aria-live="polite">
-      <p class="eyebrow">Autonomous options overlay</p>
-      <h2 id="headline">判断ログを同期しています</h2>
-      <p>Core Bookの増減ではなく、固定された安全ゲートの下で、Agentがどのように判断・停止・送信したかを表示します。</p>
+      <p class="eyebrow" data-copy="overlay">Autonomous options overlay</p>
+      <h2 id="headline" data-copy="syncing">Syncing decision log</h2>
+      <p data-copy="description">This monitor focuses on how the agent decides, stops, and submits under fixed safety gates—not on Core Book changes.</p>
     </section>
     <section class="grid" aria-label="Agent performance">
-      <article class="card"><div class="label">Decision cycles</div><div class="metric" id="decisions">—</div><p class="hint">記録済みの判断</p></article>
-      <article class="card"><div class="label">Gate passed</div><div class="metric" id="passed">—</div><p class="hint">安全条件を通過</p></article>
-      <article class="card"><div class="label">Policy stops</div><div class="metric" id="stopped">—</div><p class="hint">安全のため停止</p></article>
-      <article class="card"><div class="label">Overlay sent</div><div class="metric" id="submitted">—</div><p class="hint">自律 paper 送信</p></article>
+      <article class="card"><div class="label" data-copy="cycles">Decision cycles</div><div class="metric" id="decisions">—</div><p class="hint" data-copy="recorded">Recorded decisions</p></article>
+      <article class="card"><div class="label" data-copy="passed">Gate passed</div><div class="metric" id="passed">—</div><p class="hint" data-copy="safe">Passed safety checks</p></article>
+      <article class="card"><div class="label" data-copy="stops">Policy stops</div><div class="metric" id="stopped">—</div><p class="hint" data-copy="stoppedHint">Stopped for safety</p></article>
+      <article class="card"><div class="label" data-copy="sent">Overlay sent</div><div class="metric" id="submitted">—</div><p class="hint" data-copy="paperSent">Autonomous paper submissions</p></article>
     </section>
     <section class="section">
-      <article class="panel current"><div class="label">Latest decision</div><div class="state" id="latest-state">まだ記録がありません</div><p class="hint" id="latest-detail">次のheartbeatで安全な判断が記録されると更新されます。</p></article>
-      <article class="panel"><div class="label">Live activity</div><ol class="log" id="activity"><li class="empty">公開できる活動ログはまだありません。</li></ol></article>
+      <article class="panel current"><div class="label" data-copy="latest">Latest decision</div><div class="state" id="latest-state" data-copy="noRecords">No decisions recorded yet</div><p class="hint" id="latest-detail" data-copy="wait">This will update when the next safe decision is recorded.</p></article>
+      <article class="panel"><div class="label" data-copy="activity">Live activity</div><ol class="log" id="activity"><li class="empty" data-copy="noActivity">No public activity yet.</li></ol></article>
     </section>
-    <footer>公開ビューは読み取り専用です。注文・ポジション・承認操作・識別子は表示しません。<span id="updated"></span></footer>
+    <footer><span data-copy="footer">This public view is read-only. It does not display orders, positions, approvals, or identifiers.</span><span id="updated"></span></footer>
   </main>
   <script>
+    const language = document.documentElement.lang === 'ja' ? 'ja' : 'en';
+    const copy = language === 'ja' ? { title:'Agent 判断モニター', public:'公開 / paper only', connecting:'接続中', overlay:'自律 options overlay', syncing:'判断ログを同期しています', description:'Core Bookの増減ではなく、固定された安全gateの下で、Agentがどのように判断・停止・送信したかを表示します。', cycles:'判断サイクル', recorded:'記録済みの判断', passed:'Gate 通過', safe:'安全条件を通過', stops:'ポリシー停止', stoppedHint:'安全のため停止', sent:'Overlay 送信', paperSent:'自律 paper 送信', latest:'最新の判断', noRecords:'まだ記録がありません', wait:'次の安全な判断が記録されると更新されます。', activity:'ライブ活動', noActivity:'公開できる活動ログはまだありません。', footer:'公開ビューは読み取り専用です。注文・ポジション・承認操作・識別子は表示しません。', running:'稼働中', stopped:'停止中', unavailable:'一時的に接続できません', updated:'最終更新', serviceRunning:'heartbeat は稼働中です。', serviceStopped:'heartbeat は停止しています。', jst:'JST' } : { title:'Agent decision monitor', public:'Public / paper only', connecting:'Connecting', overlay:'Autonomous options overlay', syncing:'Syncing decision log', description:'This monitor focuses on how the agent decides, stops, and submits under fixed safety gates—not on Core Book changes.', cycles:'Decision cycles', recorded:'Recorded decisions', passed:'Gate passed', safe:'Passed safety checks', stops:'Policy stops', stoppedHint:'Stopped for safety', sent:'Overlay sent', paperSent:'Autonomous paper submissions', latest:'Latest decision', noRecords:'No decisions recorded yet', wait:'This will update when the next safe decision is recorded.', activity:'Live activity', noActivity:'No public activity yet.', footer:'This public view is read-only. It does not display orders, positions, approvals, or identifiers.', running:'Running', stopped:'Stopped', unavailable:'Temporarily unavailable', updated:'Updated', serviceRunning:'Heartbeat is running.', serviceStopped:'Heartbeat is stopped.', jst:'JST' };
+    document.title = copy.title;
+    document.querySelectorAll('[data-copy]').forEach(node => { node.textContent = copy[node.dataset.copy]; });
     const text = (id, value) => { document.getElementById(id).textContent = value; };
-    const formatTime = (iso) => iso ? new Intl.DateTimeFormat('ja-JP', { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'Asia/Tokyo' }).format(new Date(iso)) : '—';
+    const formatTime = (iso) => iso ? new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'Asia/Tokyo' }).format(new Date(iso)) : '—';
     function render(data) {
-      text('heartbeat', data.service.heartbeat === 'running' ? '稼働中' : '停止中');
+      text('heartbeat', data.service.heartbeat === 'running' ? copy.running : copy.stopped);
       text('decisions', String(data.performance.decisions_recorded));
       text('passed', String(data.performance.gate_passed));
       text('stopped', String(data.performance.policy_stops));
       text('submitted', String(data.performance.autonomous_submissions));
       const latest = data.latest;
-      text('headline', latest ? latest.decision : '安全な判断を待機中');
-      text('latest-state', latest ? latest.state : 'まだ記録がありません');
-      text('latest-detail', latest ? `${formatTime(latest.timestamp)} JST ・ ${data.service.market_data}` : `heartbeat ${data.service.heartbeat === 'running' ? 'は稼働中です' : 'は停止しています'}。`);
+      text('headline', latest ? latest.decision : copy.syncing);
+      text('latest-state', latest ? latest.state : copy.noRecords);
+      text('latest-detail', latest ? `${formatTime(latest.timestamp)} ${copy.jst} · ${data.service.market_data}` : data.service.heartbeat === 'running' ? copy.serviceRunning : copy.serviceStopped);
       const list = document.getElementById('activity'); list.replaceChildren();
-      if (!data.activity.length) { const item=document.createElement('li'); item.className='empty'; item.textContent='公開できる活動ログはまだありません。'; list.append(item); }
+      if (!data.activity.length) { const item=document.createElement('li'); item.className='empty'; item.textContent=copy.noActivity; list.append(item); }
       data.activity.forEach(item => { const row=document.createElement('li'), time=document.createElement('span'), detail=document.createElement('span'); time.className='time'; time.textContent=formatTime(item.timestamp); detail.textContent=`${item.decision} — ${item.state}`; row.append(time,detail); list.append(row); });
-      text('updated', ` 最終更新 ${formatTime(data.generated_at)} JST`);
+      text('updated', ` ${copy.updated} ${formatTime(data.generated_at)} ${copy.jst}`);
     }
-    async function refresh() { try { const response=await fetch('/api/monitor', { cache:'no-store' }); if (!response.ok) throw new Error('monitor unavailable'); render(await response.json()); } catch { text('heartbeat','一時的に接続できません'); } }
+    async function refresh() { try { const response=await fetch(`/api/monitor?lang=${language}`, { cache:'no-store' }); if (!response.ok) throw new Error('monitor unavailable'); render(await response.json()); } catch { text('heartbeat',copy.unavailable); } }
     refresh(); window.setInterval(refresh, 30000);
   </script>
 </body>

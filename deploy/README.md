@@ -24,7 +24,7 @@ server environment. The validated model id can be overridden at deploy time by
 setting `HF_MODEL_ID` in the calling environment. It deploys a one-CPU Modal Server
 with `min_containers=1`; its server process owns the heartbeat continuously and
 exposes public liveness at `/healthz`, operational state at `/statusz`, and a
-public read-only monitor at `/`. The monitor is a sanitized aggregate of the
+public read-only monitor at `/` (English by default) and `/ja` (Japanese). The monitor is a sanitized aggregate of the
 decision ledger: it highlights decision cycles, gate outcomes, policy stops,
 autonomous overlay submissions, and a fixed-label activity log. It never
 returns positions, account values, order or broker identifiers, approval
