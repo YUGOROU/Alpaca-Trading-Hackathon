@@ -122,6 +122,48 @@ def record_human_approval(
         return _record_human_approval_locked(target, decision_id, approved_by=approved_by)
 
 
+def record_autonomous_authorization(path: str | Path, decision_id: str) -> dict[str, Any]:
+    """Authorize one bounded options-overlay proposal under the deployed policy.
+
+    This is deliberately a separate ledger transition from human approval.  It is
+    available only to proposals recorded as ``autonomous-paper`` and does not
+    contact the broker; the caller must still revalidate the live snapshot before
+    submitting the order.
+    """
+    if not decision_id.strip():
+        raise ValueError("decision_id is required")
+    target = Path(path)
+    with _ledger_lock(target):
+        rows = _read_rows(target)
+        proposal = _proposal(rows, decision_id)
+        if proposal.get("gate", {}).get("status") != "approved_for_dry_run":
+            raise ValueError("only approved proposals may receive autonomous authorization")
+        if proposal.get("execution", {}).get("mode") != "autonomous-paper":
+            raise ValueError("autonomous authorization requires autonomous-paper execution mode")
+        decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
+        latest = decision_rows[-1].get("execution") if decision_rows else None
+        if latest is None:
+            raise ValueError("autonomous authorization requires a proposed decision")
+        if latest.get("state") == "authorized" and latest.get("approval_source") == "autonomous_policy":
+            return decision_rows[-1]
+        if latest.get("state") != "proposed":
+            raise ValueError("autonomous authorization requires a proposed decision")
+        row = {
+            "schema_version": 2,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event": "autonomous_authorization",
+            "decision_id": decision_id,
+            "context_id": proposal["decision"]["context_id"],
+            "execution": {
+                "mode": "autonomous-paper",
+                "state": "authorized",
+                "approval_source": "autonomous_policy",
+            },
+        }
+        _append_row(target, row)
+        return row
+
+
 def _record_human_approval_locked(target: Path, decision_id: str, *, approved_by: str) -> dict[str, Any]:
     rows = _read_rows(target)
     proposal = next((row for row in rows if row.get("event") == "proposal" and row.get("decision_id") == decision_id), None)
@@ -225,8 +267,10 @@ def _record_submission_requested_locked(
     proposal = _proposal(rows, decision_id)
     decision_rows = [row for row in rows if row.get("decision_id") == decision_id]
     latest = decision_rows[-1].get("execution") if decision_rows else None
-    if latest is None or latest.get("state") != "approved":
-        raise ValueError("submission requires an approved decision")
+    mode = proposal.get("execution", {}).get("mode")
+    expected_state = "approved" if mode == "human" else "authorized" if mode == "autonomous-paper" else None
+    if latest is None or latest.get("state") != expected_state:
+        raise ValueError("submission requires an approved decision or autonomous authorization")
     if revalidation.get("ok") is not True:
         raise ValueError("submission requires successful revalidation")
     if revalidation.get("context_id") != proposal["decision"]["context_id"]:
@@ -243,9 +287,9 @@ def _record_submission_requested_locked(
             "open_order_ids": revalidation.get("open_order_ids"),
         },
         "execution": {
-            "mode": "human",
+            "mode": mode,
             "state": "submission_requested",
-            "approval_source": "human",
+            "approval_source": "human" if mode == "human" else "autonomous_policy",
         },
     }
     _append_row(target, row)
@@ -275,9 +319,9 @@ def record_submission_failure(path: str | Path, decision_id: str, *, reason: str
             "context_id": proposal["decision"]["context_id"],
             "failure": {"reason": reason[:500]},
             "execution": {
-                "mode": "human",
+                "mode": proposal.get("execution", {}).get("mode"),
                 "state": "submission_failed",
-                "approval_source": "human",
+                "approval_source": "human" if proposal.get("execution", {}).get("mode") == "human" else "autonomous_policy",
             },
         }
         _append_row(target, row)
@@ -305,7 +349,11 @@ def record_submission_unknown(
             "decision_id": decision_id,
             "context_id": proposal["decision"]["context_id"],
             "submission": {"client_order_ids": client_order_ids, "reason": reason[:500]},
-            "execution": {"mode": "human", "state": "submission_unknown", "approval_source": "human"},
+            "execution": {
+                "mode": proposal.get("execution", {}).get("mode"),
+                "state": "submission_unknown",
+                "approval_source": "human" if proposal.get("execution", {}).get("mode") == "human" else "autonomous_policy",
+            },
         }
         _append_row(target, row)
         return row
@@ -347,9 +395,9 @@ def _record_broker_update_locked(
         "context_id": proposal["decision"]["context_id"],
         "broker_orders": normalized,
         "execution": {
-            "mode": "human",
+            "mode": proposal.get("execution", {}).get("mode"),
             "state": state,
-            "approval_source": "human",
+            "approval_source": "human" if proposal.get("execution", {}).get("mode") == "human" else "autonomous_policy",
         },
     }
     _append_row(target, row)

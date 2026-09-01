@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Public monitor for a paper-only autonomous options-overlay agent">
+  <title>Agent Monitor</title>
+  <style>
+    :root { --blue:#1a73e8; --blue-soft:#e8f0fe; --ink:#202124; --muted:#5f6368; --line:#e8eaed; --wash:#f8faff; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:#fff; color:var(--ink); font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP",sans-serif; -webkit-font-smoothing:antialiased; }
+    main { max-width:1040px; padding:28px 20px 48px; margin:auto; }
+    header { display:flex; justify-content:space-between; align-items:flex-start; gap:20px; padding-bottom:24px; border-bottom:1px solid var(--line); }
+    h1 { margin:0; font-size:18px; letter-spacing:-.02em; }
+    .eyebrow, .label { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.09em; text-transform:uppercase; }
+    .eyebrow { margin:0 0 4px; }
+    .live { color:var(--blue); font-size:12px; font-weight:700; white-space:nowrap; }
+    .dot { display:inline-block; width:8px; height:8px; margin-right:7px; border-radius:50%; background:var(--blue); animation:pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity:.35; } }
+    .hero { padding:30px 0 24px; border-bottom:1px solid var(--line); }
+    .hero h2 { max-width:720px; margin:7px 0 8px; font-size:clamp(25px,5vw,42px); line-height:1.17; letter-spacing:-.045em; }
+    .hero p { max-width:650px; margin:0; color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:20px 0 12px; }
+    .card { min-height:126px; padding:18px; border:1px solid var(--line); border-radius:8px; background:#fff; }
+    .metric { margin-top:17px; font-size:30px; font-weight:700; letter-spacing:-.04em; line-height:1; }
+    .hint { margin:7px 0 0; color:var(--muted); font-size:12px; }
+    .section { display:grid; grid-template-columns:1.1fr .9fr; gap:12px; margin-top:12px; }
+    .panel { border:1px solid var(--line); border-radius:8px; padding:20px; }
+    .current { border-color:#d2e3fc; background:var(--wash); }
+    .state { margin:12px 0 4px; color:var(--blue); font-size:22px; font-weight:700; letter-spacing:-.025em; }
+    .log { list-style:none; padding:0; margin:10px 0 0; }
+    .log li { display:grid; grid-template-columns:82px 1fr; gap:10px; padding:12px 0; border-top:1px solid var(--line); font-size:13px; }
+    .time { color:var(--muted); font-variant-numeric:tabular-nums; }
+    .empty { color:var(--muted); font-size:13px; padding:22px 0 6px; }
+    footer { margin-top:16px; color:var(--muted); font-size:12px; }
+    @media (max-width:720px) { main{padding-top:20px}.grid{grid-template-columns:repeat(2,1fr)}.section{grid-template-columns:1fr}header{padding-bottom:18px}.hero{padding-top:24px} }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow" data-copy="public">Public / paper only</p><h1 data-copy="title">Agent decision monitor</h1></div>
+      <div class="live"><span class="dot"></span><span id="heartbeat" data-copy="connecting">Connecting</span></div>
+    </header>
+    <section class="hero" aria-live="polite">
+      <p class="eyebrow" data-copy="overlay">Autonomous options overlay</p>
+      <h2 id="headline" data-copy="syncing">Syncing decision log</h2>
+      <p data-copy="description">This monitor focuses on how the agent decides, stops, and submits under fixed safety gates—not on Core Book changes.</p>
+    </section>
+    <section class="grid" aria-label="Agent performance">
+      <article class="card"><div class="label" data-copy="cycles">Decision cycles</div><div class="metric" id="decisions">—</div><p class="hint" data-copy="recorded">Recorded decisions</p></article>
+      <article class="card"><div class="label" data-copy="passed">Gate passed</div><div class="metric" id="passed">—</div><p class="hint" data-copy="safe">Passed safety checks</p></article>
+      <article class="card"><div class="label" data-copy="stops">Policy stops</div><div class="metric" id="stopped">—</div><p class="hint" data-copy="stoppedHint">Stopped for safety</p></article>
+      <article class="card"><div class="label" data-copy="sent">Overlay sent</div><div class="metric" id="submitted">—</div><p class="hint" data-copy="paperSent">Autonomous paper submissions</p></article>
+    </section>
+    <section class="section">
+      <article class="panel current"><div class="label" data-copy="latest">Latest decision</div><div class="state" id="latest-state" data-copy="noRecords">No decisions recorded yet</div><p class="hint" id="latest-detail" data-copy="wait">This will update when the next safe decision is recorded.</p></article>
+      <article class="panel"><div class="label" data-copy="activity">Live activity</div><ol class="log" id="activity"><li class="empty" data-copy="noActivity">No public activity yet.</li></ol></article>
+    </section>
+    <footer><span data-copy="footer">This public view is read-only. It does not display orders, positions, approvals, or identifiers.</span><span id="updated"></span></footer>
+  </main>
+  <script>
+    const language = document.documentElement.lang === 'ja' ? 'ja' : 'en';
+    const copy = language === 'ja' ? { title:'Agent 判断モニター', public:'公開 / paper only', connecting:'接続中', overlay:'自律 options overlay', syncing:'判断ログを同期しています', description:'Core Bookの増減ではなく、固定された安全gateの下で、Agentがどのように判断・停止・送信したかを表示します。', cycles:'判断サイクル', recorded:'記録済みの判断', passed:'Gate 通過', safe:'安全条件を通過', stops:'ポリシー停止', stoppedHint:'安全のため停止', sent:'Overlay 送信', paperSent:'自律 paper 送信', latest:'最新の判断', noRecords:'まだ記録がありません', wait:'次の安全な判断が記録されると更新されます。', activity:'ライブ活動', noActivity:'公開できる活動ログはまだありません。', footer:'公開ビューは読み取り専用です。注文・ポジション・承認操作・識別子は表示しません。', running:'稼働中', stopped:'停止中', unavailable:'一時的に接続できません', updated:'最終更新', serviceRunning:'heartbeat は稼働中です。', serviceStopped:'heartbeat は停止しています。', jst:'JST' } : { title:'Agent decision monitor', public:'Public / paper only', connecting:'Connecting', overlay:'Autonomous options overlay', syncing:'Syncing decision log', description:'This monitor focuses on how the agent decides, stops, and submits under fixed safety gates—not on Core Book changes.', cycles:'Decision cycles', recorded:'Recorded decisions', passed:'Gate passed', safe:'Passed safety checks', stops:'Policy stops', stoppedHint:'Stopped for safety', sent:'Overlay sent', paperSent:'Autonomous paper submissions', latest:'Latest decision', noRecords:'No decisions recorded yet', wait:'This will update when the next safe decision is recorded.', activity:'Live activity', noActivity:'No public activity yet.', footer:'This public view is read-only. It does not display orders, positions, approvals, or identifiers.', running:'Running', stopped:'Stopped', unavailable:'Temporarily unavailable', updated:'Updated', serviceRunning:'Heartbeat is running.', serviceStopped:'Heartbeat is stopped.', jst:'JST' };
+    document.title = copy.title;
+    document.querySelectorAll('[data-copy]').forEach(node => { node.textContent = copy[node.dataset.copy]; });
+    const text = (id, value) => { document.getElementById(id).textContent = value; };
+    const formatTime = (iso) => iso ? new Intl.DateTimeFormat(language === 'ja' ? 'ja-JP' : 'en-US', { hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'Asia/Tokyo' }).format(new Date(iso)) : '—';
+    function render(data) {
+      text('heartbeat', data.service.heartbeat === 'running' ? copy.running : copy.stopped);
+      text('decisions', String(data.performance.decisions_recorded));
+      text('passed', String(data.performance.gate_passed));
+      text('stopped', String(data.performance.policy_stops));
+      text('submitted', String(data.performance.autonomous_submissions));
+      const latest = data.latest;
+      text('headline', latest ? latest.decision : copy.syncing);
+      text('latest-state', latest ? latest.state : copy.noRecords);
+      text('latest-detail', latest ? `${formatTime(latest.timestamp)} ${copy.jst} · ${data.service.market_data}` : data.service.heartbeat === 'running' ? copy.serviceRunning : copy.serviceStopped);
+      const list = document.getElementById('activity'); list.replaceChildren();
+      if (!data.activity.length) { const item=document.createElement('li'); item.className='empty'; item.textContent=copy.noActivity; list.append(item); }
+      data.activity.forEach(item => { const row=document.createElement('li'), time=document.createElement('span'), detail=document.createElement('span'); time.className='time'; time.textContent=formatTime(item.timestamp); detail.textContent=`${item.decision} — ${item.state}`; row.append(time,detail); list.append(row); });
+      text('updated', ` ${copy.updated} ${formatTime(data.generated_at)} ${copy.jst}`);
+    }
+    async function refresh() { try { const response=await fetch(`/api/monitor?lang=${language}`, { cache:'no-store' }); if (!response.ok) throw new Error('monitor unavailable'); render(await response.json()); } catch { text('heartbeat',copy.unavailable); } }
+    refresh(); window.setInterval(refresh, 30000);
+  </script>
+</body>
+</html>

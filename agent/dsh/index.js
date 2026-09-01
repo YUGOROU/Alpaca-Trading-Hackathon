@@ -17,6 +17,7 @@ export const Config = Schema.object({
   live: Schema.boolean().default(false),
   ledgerPath: Schema.string().required(),
   pythonExecutable: Schema.string().default('python3'),
+  executionMode: Schema.string().default('human'),
 })
 
 const CONTEXT_OUTPUT = {

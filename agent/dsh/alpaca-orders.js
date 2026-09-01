@@ -45,6 +45,11 @@ function pad(n, width) {
   return String(n).padStart(width, '0')
 }
 
+function parseOccExpiry(occ) {
+  const ymd = occ.slice(-15, -9)
+  return new Date(Date.UTC(2000 + Number(ymd.slice(0, 2)), Number(ymd.slice(2, 4)) - 1, Number(ymd.slice(4, 6))))
+}
+
 // Build an OCC symbol: ROOT + YYMMDD + C/P + strike*1000 (8 digits). e.g. SPY240920P00520000
 export function occSymbol(root, expiry, right, strike) {
   const yy = pad(expiry.getUTCFullYear() % 100, 2)
@@ -52,11 +57,6 @@ export function occSymbol(root, expiry, right, strike) {
   const dd = pad(expiry.getUTCDate(), 2)
   const strk = pad(Math.round(strike * 1000), 8)
   return `${root.toUpperCase()}${yy}${mm}${dd}${right.toUpperCase()}${strk}`
-}
-
-function parseOccExpiry(occ) {
-  const ymd = occ.slice(-15, -9)
-  return new Date(Date.UTC(2000 + Number(ymd.slice(0, 2)), Number(ymd.slice(2, 4)) - 1, Number(ymd.slice(4, 6))))
 }
 
 // Resolve one leg (right P/C + target strike + target DTE) to a real listed contract by
@@ -116,26 +116,29 @@ export function legSpecs(order) {
 
 // Shapes verified against alpaca-mcp-server 2.2.1's place_option_order schema
 // (qty/ratio_qty are strings; single-leg uses side; multi-leg uses per-leg side +
-// position_intent). Market order, day TIF, paper-enforced by the child env above.
-export function buildPlaceArgs(resolved, order) {
+// position_intent). Autonomous orders are bounded limit orders; human review
+// keeps the historical market-order behaviour.
+export function buildPlaceArgs(resolved, order, executable = null) {
   return {
     symbol: resolved.symbol,
     side: sideFor(order.intent),
     qty: String(order.contracts),
-    type: 'market',
+    type: executable ? 'limit' : 'market',
     time_in_force: 'day',
     position_intent: order.intent,
+    ...(executable ? { limit_price: executable.limitPrice } : {}),
     // Broker-level idempotency: a retry with the same id is rejected, not duplicated.
     ...(order.client_order_id ? { client_order_id: order.client_order_id } : {}),
   }
 }
 
-export function buildMlegArgs(order, resolvedLegs) {
+export function buildMlegArgs(order, resolvedLegs, executable = null) {
   return {
     order_class: 'mleg',
     qty: String(order.contracts),
-    type: 'market',
+    type: executable ? 'limit' : 'market',
     time_in_force: 'day',
+    ...(executable ? { limit_price: executable.limitPrice } : {}),
     ...(order.client_order_id ? { client_order_id: order.client_order_id } : {}),
     legs: resolvedLegs.map((leg) => ({
       symbol: leg.symbol,
@@ -144,6 +147,72 @@ export function buildMlegArgs(order, resolvedLegs) {
       position_intent: leg.action === 'sell' ? 'sell_to_open' : 'buy_to_open',
     })),
   }
+}
+
+function quoteValue(snapshot, names) {
+  for (const container of [snapshot, snapshot?.latest_quote, snapshot?.latestQuote, snapshot?.quote]) {
+    if (!container || typeof container !== 'object') continue
+    for (const name of names) {
+      const value = Number(container[name])
+      if (Number.isFinite(value) && value > 0) return value
+    }
+  }
+  return null
+}
+
+function quoteFor(resolved, side) {
+  const names = side === 'buy'
+    ? ['ask_price', 'askPrice', 'ap']
+    : ['bid_price', 'bidPrice', 'bp']
+  const price = quoteValue(resolved.snapshot, names)
+  if (price === null) throw new Error(`missing executable ${side === 'buy' ? 'ask' : 'bid'} for ${resolved.symbol}`)
+  return price
+}
+
+function priceString(value) {
+  if (!Number.isFinite(value)) throw new Error('non-finite executable option price')
+  return value.toFixed(2)
+}
+
+// Return the worst immediately executable price: ask for bought legs, bid for
+// sold legs.  The same price is placed as a limit, so a later fill cannot be
+// worse than the value that passed the deterministic cap.
+export function executableOrderPrice(order, resolvedLegs) {
+  const legPrices = resolvedLegs.map((leg) => ({ ...leg, price: quoteFor(leg, leg.action) }))
+  if (legPrices.length === 1) {
+    const debit = legPrices[0].action === 'buy' ? legPrices[0].price : -legPrices[0].price
+    const totalCost = Math.max(0, debit) * 100 * order.contracts
+    if (order.structure === 'protective_put') {
+      const cap = Number(order.max_total_cost)
+      if (!Number.isFinite(cap) || cap < 0 || totalCost > cap + 1e-9) {
+        throw new Error('executable protective-put cost exceeds deterministic cap')
+      }
+    }
+    return { limitPrice: priceString(legPrices[0].price), netDebit: debit }
+  }
+
+  // Alpaca's mleg API takes a signed net price: positive debit, negative credit.
+  const netDebit = legPrices.reduce(
+    (total, leg) => total + (leg.action === 'buy' ? leg.price : -leg.price), 0,
+  )
+  if (order.structure === 'iron_condor') {
+    const putShort = legPrices.find((leg) => leg.right === 'P' && leg.action === 'sell')
+    const putLong = legPrices.find((leg) => leg.right === 'P' && leg.action === 'buy')
+    const callShort = legPrices.find((leg) => leg.right === 'C' && leg.action === 'sell')
+    const callLong = legPrices.find((leg) => leg.right === 'C' && leg.action === 'buy')
+    // Contract resolution can snap the model's target to a listed strike. Risk
+    // must use those actual strikes, never the pre-resolution target values.
+    const width = Math.max(
+      Number(putShort?.strike) - Number(putLong?.strike),
+      Number(callLong?.strike) - Number(callShort?.strike),
+    )
+    const totalLoss = (width + netDebit) * 100 * order.contracts
+    const cap = Number(order.max_total_loss)
+    if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(cap) || cap < 0 || totalLoss < 0 || totalLoss > cap + 1e-9) {
+      throw new Error('executable iron-condor loss exceeds deterministic cap')
+    }
+  }
+  return { limitPrice: priceString(netDebit), netDebit }
 }
 
 // Fetch a fresh P or C chain for SPY through the order client (has options-data). Placement
@@ -156,7 +225,9 @@ export async function fetchOptionChain(client, type) {
   return decodeMcpResult(raw) || {}
 }
 
-export async function placeGateOrders(client, gateOrders, optionChain, io = { stderr: process.stderr }) {
+export async function placeGateOrders(
+  client, gateOrders, optionChain, io = { stderr: process.stderr }, { executablePrices = false } = {},
+) {
   const results = []
   for (const order of gateOrders) {
     if (!PLACEABLE_STRUCTURES.has(order.structure)) {
@@ -166,13 +237,14 @@ export async function placeGateOrders(client, gateOrders, optionChain, io = { st
     }
     try {
       // Resolve every leg first — a partially-resolved structure is never sent (fail-closed).
-      const resolved = legSpecs(order).map((leg) => ({
-        ...resolveContract(optionChain, leg.right, leg.strike, order.expiry_days),
-        action: leg.action,
-      }))
+      const resolved = legSpecs(order).map((leg) => {
+        const contract = resolveContract(optionChain, leg.right, leg.strike, order.expiry_days)
+        return { ...contract, right: leg.right, action: leg.action, snapshot: optionChain[contract.symbol] }
+      })
+      const executable = executablePrices ? executableOrderPrice(order, resolved) : null
       const args = resolved.length === 1
-        ? buildPlaceArgs(resolved[0], order)
-        : buildMlegArgs(order, resolved)
+        ? buildPlaceArgs(resolved[0], order, executable)
+        : buildMlegArgs(order, resolved, executable)
       const raw = await client.callTool({ name: PLACE_TOOL, arguments: args })
       const symbols = resolved.map((r) => r.symbol)
       results.push({ order, status: 'placed', contracts: symbols, result: decodeMcpResult(raw) })

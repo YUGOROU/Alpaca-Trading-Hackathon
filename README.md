@@ -6,7 +6,7 @@
 
 <sub>Team **Liquidity Leak** · Alpaca × lablab.ai Hackathon · *Options Alpha Agents*</sub>
 
-![tests](https://img.shields.io/badge/tests-94%20passing-2ea44f?style=for-the-badge)
+![tests](https://img.shields.io/badge/tests-120%20passing-2ea44f?style=for-the-badge)
 ![python](https://img.shields.io/badge/python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![node](https://img.shields.io/badge/runtime-DSH%20%C2%B7%20Node%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![deploy](https://img.shields.io/badge/deploy-Modal%20always--on-7b3fe4?style=for-the-badge)
@@ -367,8 +367,22 @@ temperature 0, harness-owned decision ids.
 ## ☁️ Deployment: always-on heartbeat
 
 Packaged as a durable **Modal** app — an always-on CPU container that owns the heartbeat and
-exposes an HTTP liveness probe. **Paper-safe by construction: no Alpaca credential is mounted,
-so this deployment physically cannot place a trade** until a separate, reviewed change arms it.
+exposes an HTTP liveness probe. The deployed runtime mounts a dedicated **paper-only** Alpaca
+Secret and can execute one gate-approved, opening SPY overlay per eligible cycle: a protective
+put, covered call, or iron condor. It cannot trade the Core Book, use a live account, choose
+arbitrary symbols or sizes, submit batches, or close option structures autonomously. A later
+close/roll slice requires contract-level ledger provenance so it cannot confuse a hedge with an
+income-spread leg.
+
+Before an autonomous write, the executor resolves the listed contracts again, derives the
+worst executable bid/ask price, rechecks the hedge-cost or condor defined-risk cap, and sends a
+bounded limit (or signed net-credit multi-leg limit) order. Missing quotes or a breached cap stop
+the cycle without an order. Autonomous income exposes only one SPY iron-condor candidate; it does
+not batch Core Book covered calls.
+
+Each accepted autonomous protective-put open is recorded in an append-only contract-provenance
+sidecar with its exact OCC contract, quantity, broker order id, strategy, and leg role. This is
+the source of intent for a future close/roll gate; the broker remains the source of truth.
 
 ```mermaid
 flowchart TB
@@ -379,8 +393,8 @@ flowchart TB
     HS --> LOOP["🔁 DSH heartbeat loop<br/>every 30 min"]
     LOOP --> DEC["🧠 one decide cycle"]
     DEC --> VOL[("💾 state volume<br/>decisions.jsonl")]
-    NO["🚫 No Alpaca secret mounted<br/>→ read-only · cannot trade"] -.-> APP
-    style NO fill:#4a1010,stroke:#e05252,color:#fff
+    SEC2["🔑 alpaca-paper Secret<br/>paper credentials only"] --> APP
+    G["🚦 deterministic gate + fresh revalidation"] --> DEC
     style APP fill:#2a1a4a,stroke:#a06be0,color:#fff
 ```
 
@@ -402,14 +416,14 @@ agent/           The reasoning layer
   ├─ gate.py          deterministic admissibility gate
   ├─ cli.py           context / submit entrypoints (the deterministic bridge)
   ├─ model_evaluation.py  candidate qualification protocol
-  └─ dsh/             DSH harness · model-native adapter · heartbeat (Node)
+  └─ dsh/             DSH harness · model-native adapter · heartbeat · paper executor (Node)
 feed/            Data sources — Alpaca (live) + mock (offline), one interface
 harness/         Order translation + paper executor (fail-closed)
 runtime/         Self-grading + the strategy API
 backtest/        Historical crash replay — hedged vs. unhedged equity curves
 deploy/          Modal always-on heartbeat + model-eval apps
 results/         Committed model-qualification evidence
-tests/           74 Python tests · agent/dsh/tests 20 Node tests
+tests/           95 Python tests · agent/dsh/tests 25 Node tests
 ```
 
 ---
@@ -443,7 +457,7 @@ python -m unittest discover -s tests        # 74 Python tests
 cd agent/dsh && npm test                    # 20 DSH / adapter tests
 ```
 
-**94 tests, zero external services required.** The deterministic core is exercised end-to-end
+**120 tests, zero external services required.** The deterministic core is exercised end-to-end
 — metrics, pricing, scoring, sizing, caps, the candidate gate, the model-native adapter, and
 the paper-placement path — all offline.
 
@@ -455,8 +469,8 @@ the paper-placement path — all offline.
 timeline
     title From engine → autonomous defender
     Shipped : Pure-Python risk engine (94 tests) : DSH model-native adapter : GLM-5.3 transport qualification : Modal always-on heartbeat
-    Now : Live paper read path verified : Seed the book + watch the hedge step in on stress
-    Next : Arm autonomous paper execution : Domain-finetune the reasoning model on finance / tool-use : Multi-underlying, cross-hedged books
+    Now : Autonomous bounded SPY paper overlays : Seed the book + watch the hedge step in and out on stress
+    Next : Domain-finetune the reasoning model on finance / tool-use : Multi-underlying, cross-hedged books
 ```
 
 ---

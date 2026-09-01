@@ -62,6 +62,7 @@ class DecisionContext:
     snapshot: RiskSnapshot
     candidates: tuple[DecisionCandidate, ...]
     input_provenance: dict[str, Any] | None = None
+    execution_mode: str = "human"
 
     def to_model_dict(self) -> dict[str, Any]:
         snapshot = self.snapshot
@@ -82,7 +83,8 @@ class DecisionContext:
             "decision_contract": {
                 "choose_exactly_one_candidate_id": True,
                 "exact_order_sizing_owned_by": "deterministic_gate",
-                "human_approval_required_before_submission": True,
+                "human_approval_required_before_submission": self.execution_mode == "human",
+                "execution_mode": self.execution_mode,
             },
         }
         if self.input_provenance is not None:

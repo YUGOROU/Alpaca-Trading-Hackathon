@@ -20,6 +20,7 @@ export const Config = Schema.object({
   intervalMs: Schema.number().default(1_800_000), // 30 min — matches the retired cron cadence
   marketHoursOnly: Schema.boolean().default(true),
   maxCycles: Schema.number().default(0), // 0 = run until stopped
+  executionMode: Schema.string().default('human'),
 })
 
 const RTH_START_UTC = 13 // ~09:30 ET, widened to cover DST like the old cron (13-21 UTC)

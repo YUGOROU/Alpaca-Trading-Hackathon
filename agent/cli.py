@@ -23,6 +23,7 @@ from .ledger import (
     proposal_context_id,
     proposal_orders,
     record_broker_update,
+    record_autonomous_authorization,
     record_dry_run,
     record_human_approval,
     record_human_rejection,
@@ -42,7 +43,7 @@ def _add_mode(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--live", action="store_true", help="observe live Alpaca data")
 
 
-def _scenario_context(scenario: str):
+def _scenario_context(scenario: str, *, execution_mode: str = "human"):
     fixture = get_scenario(scenario)
     context = build_decision_context(
         fixture.portfolio,
@@ -50,6 +51,7 @@ def _scenario_context(scenario: str):
         scenario_id=scenario,
         current_contracts=fixture.current_contracts,
         income_open=fixture.income_open,
+        execution_mode=execution_mode,
     )
     if not fixture.injected_data_note:
         return context
@@ -66,6 +68,7 @@ def main() -> int:
 
     context_parser = sub.add_parser("context")
     _add_mode(context_parser)
+    context_parser.add_argument("--execution-mode", choices=("human", "autonomous-paper"), default="human")
 
     submit_parser = sub.add_parser("submit")
     _add_mode(submit_parser)
@@ -81,6 +84,10 @@ def main() -> int:
     approve_parser.add_argument("--decision-id", required=True)
     approve_parser.add_argument("--approved-by", required=True)
 
+    autonomous_parser = sub.add_parser("authorize-autonomous")
+    autonomous_parser.add_argument("--ledger", required=True)
+    autonomous_parser.add_argument("--decision-id", required=True)
+
     reject_parser = sub.add_parser("reject")
     reject_parser.add_argument("--ledger", required=True)
     reject_parser.add_argument("--decision-id", required=True)
@@ -90,6 +97,7 @@ def main() -> int:
     prepare_parser.add_argument("--ledger", required=True)
     prepare_parser.add_argument("--decision-id", required=True)
     prepare_parser.add_argument("--require-exactly-one-order", action="store_true")
+    prepare_parser.add_argument("--autonomous-options-overlay", action="store_true")
 
     broker_parser = sub.add_parser("record-broker-update")
     broker_parser.add_argument("--ledger", required=True)
@@ -112,9 +120,20 @@ def main() -> int:
     reconcile_parser.add_argument("--ledger", required=True)
     reconcile_parser.add_argument("--decision-id", required=True)
 
+    provenance_parser = sub.add_parser("record-protective-put-open")
+    provenance_parser.add_argument("--ledger", required=True)
+    provenance_parser.add_argument("--decision-id", required=True)
+    provenance_parser.add_argument("--contract", required=True)
+    provenance_parser.add_argument("--quantity", required=True, type=int)
+    provenance_parser.add_argument("--broker-order-id", required=True)
+
     args = parser.parse_args()
     if args.command == "approve":
         row = record_human_approval(args.ledger, args.decision_id, approved_by=args.approved_by)
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "authorize-autonomous":
+        row = record_autonomous_authorization(args.ledger, args.decision_id)
         print(json.dumps(row, sort_keys=True))
         return 0
     if args.command == "reject":
@@ -131,10 +150,22 @@ def main() -> int:
                 raise ValueError("the initial human executor requires exactly one gate order")
             if orders[0].get("intent") == "sell_to_close":
                 raise ValueError("sell_to_close requires a recorded held OCC contract and is not yet executable")
+        if args.autonomous_options_overlay:
+            if len(orders) != 1:
+                raise ValueError("autonomous options execution requires exactly one gate order")
+            order = orders[0]
+            if order.get("structure") not in {"protective_put", "covered_call", "iron_condor"}:
+                raise ValueError("autonomous execution permits only known options-overlay structures")
+            if order.get("symbol") != "SPY":
+                raise ValueError("autonomous options execution permits only SPY overlays")
+            if order.get("intent") not in {"buy_to_open", "sell_to_open"}:
+                raise ValueError("autonomous options execution permits only bounded opening orders")
         source, _state = _live_source_and_state()
         # The canonical proposal supplies the only admissible context/order set.
         context_id = proposal_context_id(args.ledger, args.decision_id)
-        check = revalidate_live_context(context_id, source)
+        check = revalidate_live_context(
+            context_id, source, require_no_open_orders=args.autonomous_options_overlay,
+        )
         if not check["ok"]:
             print(json.dumps(check, sort_keys=True))
             return 2
@@ -188,11 +219,29 @@ def main() -> int:
         )
         print(json.dumps(row, sort_keys=True))
         return 0
+    if args.command == "record-protective-put-open":
+        from .contract_provenance import record_protective_put_open
+        row = record_protective_put_open(
+            args.ledger, decision_id=args.decision_id, contract=args.contract,
+            quantity=args.quantity, broker_order_id=args.broker_order_id,
+        )
+        print(json.dumps(row, sort_keys=True))
+        return 0
 
     scenario_id = "live" if args.live else "mock" if args.mock else args.scenario
 
     if args.command == "context":
-        context = build_live_context() if args.live else build_mock_context() if args.mock else _scenario_context(args.scenario)
+        if args.live:
+            context = build_live_context(execution_mode=args.execution_mode)
+        elif args.mock:
+            context = build_mock_context(execution_mode=args.execution_mode)
+        else:
+            fixture = get_scenario(args.scenario)
+            context = build_decision_context(
+                fixture.portfolio, fixture.market, scenario_id=args.scenario,
+                current_contracts=fixture.current_contracts, income_open=fixture.income_open,
+                execution_mode=args.execution_mode,
+            )
         print(json.dumps(context.to_model_dict(), sort_keys=True))
         return 0
 
@@ -202,7 +251,7 @@ def main() -> int:
     elif args.mock:
         context = rebuild_observed_context(args.context_id, expected_source="mock")
     else:
-        context = _scenario_context(args.scenario)
+        context = _scenario_context(args.scenario, execution_mode=args.execution_mode)
 
     decision = AgentDecision(args.context_id, args.candidate_id, args.reason)
     if context is None:
@@ -210,11 +259,19 @@ def main() -> int:
         # replacement observation during submission.  Record the rejection so it
         # remains auditable without turning a stale decision into a fresh one.
         result = GateResult("rejected", args.context_id, args.candidate_id, ("stale_or_unknown_context",), ())
+        execution_mode = validate_execution_mode(args.execution_mode)
+    elif context.execution_mode != args.execution_mode:
+        # The mode is part of the context identity and its approval contract.
+        # Never let a submit-time flag relabel a human-reviewed context as an
+        # autonomous proposal (or vice versa).
+        result = GateResult("rejected", args.context_id, args.candidate_id, ("execution_mode_mismatch",), ())
+        execution_mode = context.execution_mode
     else:
         result = validate_decision(context, decision)
+        execution_mode = context.execution_mode
     row = record_dry_run(
         args.ledger, args.decision_id, scenario_id, decision, result,
-        execution_mode=validate_execution_mode(args.execution_mode),
+        execution_mode=execution_mode,
     )
     print(json.dumps(row, sort_keys=True))
     return 0 if result.approved else 2

@@ -30,9 +30,17 @@ the model-visible decision contract and the direct official MCP observation surf
 they never grant an order or account-mutation capability.
 
 **Execution boundary.** `approved_for_dry_run` creates only a proposal; it is not
-broker submission permission. The current bundle supports Human Approval records in
-the canonical Python ledger but cannot submit orders. `--place` fails closed while the
-autonomous-paper lifecycle, fresh revalidation, and reconciliation are implemented.
+broker submission permission. The deployed heartbeat may autonomously submit one
+gate-approved, paper-only SPY overlay per eligible live cycle after separate policy
+authorization and fresh broker revalidation. It can open a protective put, covered
+call, or iron condor. It cannot trade equities, arbitrary symbols, batches, or close
+option structures; a future close/roll slice needs contract-level ledger provenance.
+For an autonomous write it resolves fresh bid/ask quotes, re-gates the price-derived hedge-cost
+or defined-risk cap, and uses a bounded limit/net-credit limit order; absent quotes or a breached
+cap fail closed. Autonomous income is one SPY iron-condor candidate, never a batch of covered
+calls.
+`--place` remains rejected because execution is controlled
+only by the deployed `PAPER_EXECUTION_MODE=autonomous-options-overlay` policy.
 
 ## Setup
 
@@ -84,7 +92,7 @@ dsh --profile portfolio-agent --live --heartbeat --interval 1800000 \
 - `--mock` selects the explicit local mock source; it is never a `--live` fallback.
 - `--heartbeat` loops; omit it for a one-shot run.
 - `--interval <ms>` sets the cadence (default 30 min, matching the retired cron).
-- `--place` is rejected until autonomous-paper is explicitly armed in a later release.
+- `--place` is always rejected; the deployed policy alone arms autonomous paper execution.
 
 ## Alpaca paper read-only boundary
 

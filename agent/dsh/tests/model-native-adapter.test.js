@@ -124,6 +124,30 @@ test('native adapter forces the two canonical calls and preserves Kimi reasoning
   assert.equal(requests[1].messages[2].reasoning_content, 'not persisted')
 })
 
+test('autonomous execution is invoked only for an approved non-empty overlay proposal', async () => {
+  let executions = 0
+  const fetchImpl = async (_url, options) => {
+    const isContext = JSON.parse(options.body).tool_choice.function.name === 'get_decision_context'
+    return { ok: true, json: async () => ({ choices: [{
+      finish_reason: 'tool_calls',
+      message: isContext
+        ? { tool_calls: [{ id: 'context-1', function: { name: 'get_decision_context', arguments: '{}' } }] }
+        : { tool_calls: [{ id: 'submit-1', function: { name: 'submit_decision', arguments: JSON.stringify({ context_id: 'ctx', candidate_id: 'full_hedge', reason: 'bounded' }) } }] },
+    }] }) }
+  }
+  const result = await runModelNativeDecision({ instruction: 'Select one.', executionMode: 'autonomous-paper' }, {
+    fetchImpl, token: 'test-token', modelId: 'zai-org/GLM-5.3:baseten',
+    getContext: async () => ({ context_id: 'ctx', candidates: [{ candidate_id: 'full_hedge' }] }),
+    submit: async () => ({ decision_id: 'dsh-1', gate: { status: 'approved_for_dry_run', orders: [{ structure: 'protective_put' }] } }),
+    executeAutonomous: async () => {
+      executions += 1
+      return { broker_event: { execution: { state: 'accepted' } } }
+    },
+  })
+  assert.equal(result.status, 'completed')
+  assert.equal(executions, 1)
+})
+
 test('native GLM tool markup is rebuilt as a canonical assistant tool call', async () => {
   const requests = []
   const fetchImpl = async (_url, options) => {

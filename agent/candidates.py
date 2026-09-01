@@ -26,6 +26,37 @@ def _empty_income() -> IncomePlan:
     )
 
 
+def _single_leg_income(income: IncomePlan, *, symbol: str, equity: float) -> IncomePlan:
+    """Keep the autonomous income surface to one defined-risk SPY overlay.
+
+    The human workflow may propose several covered calls alongside an index
+    condor.  The autonomous executor deliberately has a one-order contract, so
+    it must never be offered that aggregate plan.
+    """
+    leg = next(
+        (
+            item for item in income.legs
+            if item.kind == "iron_condor" and item.symbol == symbol
+        ),
+        None,
+    )
+    if leg is None:
+        return _empty_income()
+    annualized_yield = (
+        (leg.credit / equity) * (365.0 / leg.expiry_days)
+        if equity and leg.expiry_days else 0.0
+    )
+    return IncomePlan(
+        legs=[leg],
+        total_credit=leg.credit,
+        total_max_loss=leg.max_loss,
+        capital_reserved=leg.capital_reserved,
+        net_theta_per_day=leg.theta_per_day,
+        aggressiveness=income.aggressiveness,
+        annualized_yield=annualized_yield,
+    )
+
+
 def _strategy(posture: str, income: IncomePlan, hedge) -> StrategyPlan:
     hedge_theta = hedge.theta_per_day * hedge.contracts_target
     return StrategyPlan(
@@ -71,12 +102,13 @@ def _candidate(
     )
 
 
-def _context_id(scenario_id: str, snapshot, candidate_ids: list[str]) -> str:
+def _context_id(scenario_id: str, snapshot, candidate_ids: list[str], execution_mode: str) -> str:
     payload = json.dumps(
         {
             "scenario_id": scenario_id,
             "snapshot": asdict(snapshot),
             "candidate_ids": candidate_ids,
+            "execution_mode": execution_mode,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -93,6 +125,7 @@ def build_decision_context(
     income_open: bool = False,
     expiry_days: int = 4,
     input_provenance: dict | None = None,
+    execution_mode: str = "human",
 ) -> DecisionContext:
     """Create only choices that pass the coarse deterministic risk envelope.
 
@@ -103,6 +136,8 @@ def build_decision_context(
     `income_open` (an overlay already on from a prior cycle) suppresses the
     harvest_income choice, so a periodic loop never stacks a fresh condor every tick.
     """
+    if execution_mode not in {"human", "autonomous-paper"}:
+        raise ValueError("unknown execution mode")
     snapshot = assess(portfolio, market)
     candidates: list[DecisionCandidate] = []
 
@@ -128,6 +163,10 @@ def build_decision_context(
 
     if snapshot.risk_score < 40.0 and not income_open:
         income = plan_income(portfolio, market, snapshot, expiry_days=expiry_days)
+        if execution_mode == "autonomous-paper":
+            income = _single_leg_income(
+                income, symbol=market.index_symbol, equity=portfolio.equity,
+            )
         if income.legs:
             income_snapshot = replace(snapshot, target_coverage=0.0)
             income_hedge = plan_hedge(
@@ -221,7 +260,7 @@ def build_decision_context(
     # A live context must bind the provenance timestamps as well as the risk
     # snapshot.  Rebuilding from the persisted inputs therefore retains the
     # same ID, while a newly observed snapshot gets a distinct decision ID.
-    context_id = _context_id(scenario_id, snapshot, ids)
+    context_id = _context_id(scenario_id, snapshot, ids, execution_mode)
     if input_provenance is not None:
         provenance_bytes = json.dumps(input_provenance, sort_keys=True, separators=(",", ":"))
         context_id = sha256(f"{context_id}:{provenance_bytes}".encode()).hexdigest()[:20]
@@ -231,4 +270,5 @@ def build_decision_context(
         snapshot=snapshot,
         candidates=tuple(candidates),
         input_provenance=input_provenance,
+        execution_mode=execution_mode,
     )
