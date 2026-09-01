@@ -105,6 +105,9 @@ class LiveContextTest(unittest.TestCase):
         )
         source = Source()
         self.assertTrue(revalidate_live_context("live-context", source)["ok"])
+        pending = revalidate_live_context("live-context", source, require_no_open_orders=True)
+        self.assertFalse(pending["ok"])
+        self.assertIn("open_orders_pending", pending["reasons"])
         source.orders = ["open-2"]
         rejected = revalidate_live_context("live-context", source)
         self.assertFalse(rejected["ok"])

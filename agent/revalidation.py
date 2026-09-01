@@ -27,6 +27,7 @@ def revalidate_live_context(
     source: Any,
     *,
     max_equity_change_fraction: float = DEFAULT_MAX_EQUITY_CHANGE_FRACTION,
+    require_no_open_orders: bool = False,
 ) -> dict[str, Any]:
     """Compare the stored live snapshot to current broker state.
 
@@ -74,6 +75,8 @@ def revalidate_live_context(
         reasons.append("positions_changed")
     if open_order_ids is None or open_order_ids != baseline.get("open_order_ids"):
         reasons.append("open_orders_changed")
+    if require_no_open_orders and open_order_ids:
+        reasons.append("open_orders_pending")
     return {
         "ok": not reasons,
         "reasons": reasons,

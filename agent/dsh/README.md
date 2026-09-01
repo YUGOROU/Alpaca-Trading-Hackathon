@@ -33,9 +33,9 @@ they never grant an order or account-mutation capability.
 broker submission permission. The deployed heartbeat may autonomously submit one
 gate-approved, paper-only SPY overlay per eligible live cycle after separate policy
 authorization and fresh broker revalidation. It can open a protective put, covered
-call, or iron condor, or close a positive held protective put after resolving its OCC
-contract(s) and confirming aggregate quantity. It cannot trade equities, arbitrary symbols, batches,
-or close income structures. `--place` remains rejected because execution is controlled
+call, or iron condor. It cannot trade equities, arbitrary symbols, batches, or close
+option structures; a future close/roll slice needs contract-level ledger provenance.
+`--place` remains rejected because execution is controlled
 only by the deployed `PAPER_EXECUTION_MODE=autonomous-options-overlay` policy.
 
 ## Setup

@@ -141,7 +141,7 @@ def main() -> int:
         if args.require_exactly_one_order:
             if len(orders) != 1:
                 raise ValueError("the initial human executor requires exactly one gate order")
-            if orders[0].get("intent") == "sell_to_close" and not args.autonomous_options_overlay:
+            if orders[0].get("intent") == "sell_to_close":
                 raise ValueError("sell_to_close requires a recorded held OCC contract and is not yet executable")
         if args.autonomous_options_overlay:
             if len(orders) != 1:
@@ -151,14 +151,14 @@ def main() -> int:
                 raise ValueError("autonomous execution permits only known options-overlay structures")
             if order.get("symbol") != "SPY":
                 raise ValueError("autonomous options execution permits only SPY overlays")
-            if order.get("intent") not in {"buy_to_open", "sell_to_open", "sell_to_close"}:
-                raise ValueError("autonomous options execution permits only bounded opening or protective-put close orders")
-            if order.get("intent") == "sell_to_close" and order.get("structure") != "protective_put":
-                raise ValueError("autonomous close orders are limited to recorded protective puts")
+            if order.get("intent") not in {"buy_to_open", "sell_to_open"}:
+                raise ValueError("autonomous options execution permits only bounded opening orders")
         source, _state = _live_source_and_state()
         # The canonical proposal supplies the only admissible context/order set.
         context_id = proposal_context_id(args.ledger, args.decision_id)
-        check = revalidate_live_context(context_id, source)
+        check = revalidate_live_context(
+            context_id, source, require_no_open_orders=args.autonomous_options_overlay,
+        )
         if not check["ok"]:
             print(json.dumps(check, sort_keys=True))
             return 2

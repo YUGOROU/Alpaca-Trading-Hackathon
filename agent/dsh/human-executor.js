@@ -7,8 +7,7 @@
  * and a fresh Alpaca REST revalidation succeeds immediately before this process
  * opens the paper-only Alpaca MCP transport.  The initial operational slice
  * deliberately accepts exactly one gate order, so a heartbeat cannot
- * accidentally submit a portfolio-sized batch. A close is permitted only for
- * a positive, held SPY protective-put contract resolved at execution time.
+ * accidentally submit a portfolio-sized batch.
  */
 import { execFileSync } from 'node:child_process'
 import { connectAlpacaOrders, fetchOptionChain, placeGateOrders } from './alpaca-orders.js'
@@ -42,11 +41,8 @@ function assertAutonomousOptionsOverlay(orders) {
   if (order.symbol !== 'SPY') {
     throw new Error('autonomous options execution permits only SPY overlays')
   }
-  if (!['buy_to_open', 'sell_to_open', 'sell_to_close'].includes(order.intent)) {
-    throw new Error('autonomous options execution permits only bounded opening or protective-put close orders')
-  }
-  if (order.intent === 'sell_to_close' && order.structure !== 'protective_put') {
-    throw new Error('autonomous close orders are limited to recorded protective puts')
+  if (!['buy_to_open', 'sell_to_open'].includes(order.intent)) {
+    throw new Error('autonomous options execution permits only bounded opening orders')
   }
 }
 
@@ -100,22 +96,22 @@ async function main() {
     const calls = await fetchOptionChain(connection.client, 'call')
     const results = await placeGateOrders(connection.client, prepared.orders, { ...puts, ...calls })
     const placed = results.filter(result => result.status === 'placed')
-    if (placed.length === 0 || placed.length !== results.length) {
-      throw new Error('MCP did not place every approved order')
+    if (placed.length !== 1 || results.length !== 1) {
+      throw new Error('MCP did not place exactly one approved order')
     }
-    const alpacaOrderIds = placed.map(result => orderId(result.result))
-    if (alpacaOrderIds.some(id => !id)) {
-      const clientOrderIds = placed.map(result => result.order.client_order_id)
+    const alpacaOrderId = orderId(placed[0].result)
+    if (!alpacaOrderId) {
+      const clientOrderId = prepared.orders[0].client_order_id
       python([
         'record-submission-unknown', '--ledger', ledger, '--decision-id', decisionId,
-        '--client-order-ids-json', JSON.stringify(clientOrderIds),
+        '--client-order-ids-json', JSON.stringify([clientOrderId]),
         '--reason', 'MCP placement response omitted Alpaca order id',
       ])
       throw new Error('MCP response omitted an Alpaca order id; reconcile by client order id before retrying')
     }
     const brokerEvent = python([
       'record-broker-update', '--ledger', ledger, '--decision-id', decisionId,
-      '--state', 'accepted', '--broker-orders-json', JSON.stringify(alpacaOrderIds.map(alpaca_order_id => ({ alpaca_order_id }))),
+      '--state', 'accepted', '--broker-orders-json', JSON.stringify([{ alpaca_order_id: alpacaOrderId }]),
     ])
     process.stdout.write(JSON.stringify({ decision_id: decisionId, broker_event: brokerEvent }) + '\n')
   } catch (error) {
