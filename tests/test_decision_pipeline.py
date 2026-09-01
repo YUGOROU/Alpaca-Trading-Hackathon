@@ -76,6 +76,15 @@ class DecisionPipelineTests(unittest.TestCase):
         selected = next(c for c in ctx.candidates if c.candidate_id == "full_hedge")
         self.assertLessEqual(selected.plan.hedge.hedge_cost_drag, 0.05)
 
+    def test_fixture_autonomous_context_rebuilds_with_the_same_id(self):
+        from agent.cli import _scenario_context
+        autonomous = _scenario_context("stressed", execution_mode="autonomous-paper")
+        self.assertEqual(
+            autonomous.context_id,
+            _scenario_context("stressed", execution_mode="autonomous-paper").context_id,
+        )
+        self.assertNotEqual(autonomous.context_id, _scenario_context("stressed").context_id)
+
     def test_dry_run_ledger_is_idempotent_by_decision_id(self):
         ctx = context("elevated")
         decision = AgentDecision(

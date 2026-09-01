@@ -100,22 +100,22 @@ async function main() {
     const calls = await fetchOptionChain(connection.client, 'call')
     const results = await placeGateOrders(connection.client, prepared.orders, { ...puts, ...calls })
     const placed = results.filter(result => result.status === 'placed')
-    if (placed.length !== 1 || results.length !== 1) {
-      throw new Error('MCP did not place exactly one approved order')
+    if (placed.length === 0 || placed.length !== results.length) {
+      throw new Error('MCP did not place every approved order')
     }
-    const alpacaOrderId = orderId(placed[0].result)
-    if (!alpacaOrderId) {
-      const clientOrderId = prepared.orders[0].client_order_id
+    const alpacaOrderIds = placed.map(result => orderId(result.result))
+    if (alpacaOrderIds.some(id => !id)) {
+      const clientOrderIds = placed.map(result => result.order.client_order_id)
       python([
         'record-submission-unknown', '--ledger', ledger, '--decision-id', decisionId,
-        '--client-order-ids-json', JSON.stringify([clientOrderId]),
+        '--client-order-ids-json', JSON.stringify(clientOrderIds),
         '--reason', 'MCP placement response omitted Alpaca order id',
       ])
       throw new Error('MCP response omitted an Alpaca order id; reconcile by client order id before retrying')
     }
     const brokerEvent = python([
       'record-broker-update', '--ledger', ledger, '--decision-id', decisionId,
-      '--state', 'accepted', '--broker-orders-json', JSON.stringify([{ alpaca_order_id: alpacaOrderId }]),
+      '--state', 'accepted', '--broker-orders-json', JSON.stringify(alpacaOrderIds.map(alpaca_order_id => ({ alpaca_order_id }))),
     ])
     process.stdout.write(JSON.stringify({ decision_id: decisionId, broker_event: brokerEvent }) + '\n')
   } catch (error) {

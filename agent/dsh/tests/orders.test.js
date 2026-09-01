@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { occSymbol, resolveHedgeContract, resolveHeldProtectivePut, buildPlaceArgs, placeGateOrders } from '../alpaca-orders.js'
+import { occSymbol, resolveHedgeContract, resolveHeldProtectivePut, resolveHeldProtectivePuts, buildPlaceArgs, placeGateOrders } from '../alpaca-orders.js'
 
 const NOW = new Date(Date.UTC(2024, 8, 6)) // 2024-09-06
 
@@ -52,7 +52,21 @@ test('resolveHeldProtectivePut closes only a positive held SPY put with sufficie
     { symbol: 'SPY240920P00510000', qty: '1' },
   ], order, now)
   assert.equal(resolved.symbol, 'SPY240920P00520000')
-  assert.throws(() => resolveHeldProtectivePut([{ symbol: 'SPY240920P00520000', qty: '1' }], order, now), /no positive held/)
+  assert.throws(() => resolveHeldProtectivePut([{ symbol: 'SPYG240920P00520000', qty: '2' }], order, now), /cannot satisfy/)
+  assert.throws(() => resolveHeldProtectivePut([{ symbol: 'SPY240920P00520000', qty: '1' }], order, now), /cannot satisfy/)
+})
+
+test('resolveHeldProtectivePuts allocates a hedge reduction across exact-root put positions', () => {
+  const now = new Date(Date.UTC(2024, 8, 16))
+  const allocations = resolveHeldProtectivePuts([
+    { symbol: 'SPY240920P00520000', qty: '1' },
+    { symbol: 'SPY240927P00520000', qty: '1' },
+    { symbol: 'SPYG240920P00520000', qty: '5' },
+  ], { symbol: 'SPY', strike: 520, expiry_days: 5, contracts: 2 }, now)
+  assert.deepEqual(allocations.map(({ symbol, contracts }) => ({ symbol, contracts })), [
+    { symbol: 'SPY240920P00520000', contracts: 1 },
+    { symbol: 'SPY240927P00520000', contracts: 1 },
+  ])
 })
 
 test('placeGateOrders places the single-leg hedge and the 4-leg iron condor', async () => {

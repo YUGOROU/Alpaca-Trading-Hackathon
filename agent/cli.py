@@ -43,7 +43,7 @@ def _add_mode(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--live", action="store_true", help="observe live Alpaca data")
 
 
-def _scenario_context(scenario: str):
+def _scenario_context(scenario: str, *, execution_mode: str = "human"):
     fixture = get_scenario(scenario)
     context = build_decision_context(
         fixture.portfolio,
@@ -51,6 +51,7 @@ def _scenario_context(scenario: str):
         scenario_id=scenario,
         current_contracts=fixture.current_contracts,
         income_open=fixture.income_open,
+        execution_mode=execution_mode,
     )
     if not fixture.injected_data_note:
         return context
@@ -235,7 +236,7 @@ def main() -> int:
     elif args.mock:
         context = rebuild_observed_context(args.context_id, expected_source="mock")
     else:
-        context = _scenario_context(args.scenario)
+        context = _scenario_context(args.scenario, execution_mode=args.execution_mode)
 
     decision = AgentDecision(args.context_id, args.candidate_id, args.reason)
     if context is None:

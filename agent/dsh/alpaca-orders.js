@@ -68,29 +68,45 @@ function positionRows(value) {
 
 // A hedge reduction is abstract at the risk-gate layer. Resolve it only from
 // a positive broker position at execution time; never synthesize an OCC symbol.
-export function resolveHeldProtectivePut(positions, order, now = new Date()) {
+export function resolveHeldProtectivePuts(positions, order, now = new Date()) {
   const requested = Number(order.contracts)
   if (!Number.isInteger(requested) || requested <= 0) {
     throw new Error('close order requires a positive whole contract quantity')
   }
-  let best = null
+  const candidates = []
   for (const row of positionRows(positions)) {
     const symbol = String(row?.symbol ?? row?.asset_symbol ?? '')
     const qty = Number(row?.qty ?? row?.quantity ?? 0)
-    if (!Number.isFinite(qty) || qty < requested) continue
-    if (!symbol.startsWith(String(order.symbol).toUpperCase()) || symbol.length < 15 || symbol.at(-9) !== 'P') continue
+    if (!Number.isInteger(qty) || qty <= 0) continue
+    // OCC has a fixed YYMMDD + right + 8-digit strike suffix. The root must be
+    // exact: a SPYG put is not a SPY hedge merely because it shares a prefix.
+    if (symbol.length < 15 || symbol.slice(0, -15) !== String(order.symbol).toUpperCase() || symbol.at(-9) !== 'P') continue
     let expiry
     try { expiry = parseOccExpiry(symbol) } catch { continue }
     const days = Math.round((expiry - now) / 86_400_000)
     if (days <= 0) continue
     const strike = Number(symbol.slice(-8)) / 1000
     const score = [Math.abs(days - Number(order.expiry_days)), Math.abs(strike - Number(order.strike))]
-    if (best === null || score[0] < best.score[0] || (score[0] === best.score[0] && score[1] < best.score[1])) {
-      best = { symbol, strike, expiry, score }
-    }
+    candidates.push({ symbol, strike, expiry, qty, score })
   }
-  if (best === null) throw new Error('no positive held SPY protective put can satisfy the close order')
-  return best
+  candidates.sort((a, b) => a.score[0] - b.score[0] || a.score[1] - b.score[1] || a.symbol.localeCompare(b.symbol))
+  let remaining = requested
+  const allocations = []
+  for (const candidate of candidates) {
+    if (remaining === 0) break
+    const contracts = Math.min(candidate.qty, remaining)
+    allocations.push({ ...candidate, contracts })
+    remaining -= contracts
+  }
+  if (remaining !== 0) throw new Error('positive held SPY protective puts cannot satisfy the close order')
+  return allocations
+}
+
+// Backward-compatible convenience for callers that require one exact contract.
+export function resolveHeldProtectivePut(positions, order, now = new Date()) {
+  const allocations = resolveHeldProtectivePuts(positions, order, now)
+  if (allocations.length !== 1) throw new Error('close order spans multiple held SPY protective puts')
+  return allocations[0]
 }
 
 // Resolve one leg (right P/C + target strike + target DTE) to a real listed contract by
@@ -205,18 +221,27 @@ export async function placeGateOrders(client, gateOrders, optionChain, io = { st
     try {
       // Resolve every leg first — a partially-resolved structure is never sent (fail-closed).
       const resolved = order.intent === 'sell_to_close'
-        ? [{ ...resolveHeldProtectivePut(await fetchOptionPositions(client), order), action: 'sell' }]
+        ? resolveHeldProtectivePuts(await fetchOptionPositions(client), order).map((leg) => ({ ...leg, action: 'sell' }))
         : legSpecs(order).map((leg) => ({
           ...resolveContract(optionChain, leg.right, leg.strike, order.expiry_days),
           action: leg.action,
         }))
-      const args = resolved.length === 1
-        ? buildPlaceArgs(resolved[0], order)
-        : buildMlegArgs(order, resolved)
-      const raw = await client.callTool({ name: PLACE_TOOL, arguments: args })
-      const symbols = resolved.map((r) => r.symbol)
-      results.push({ order, status: 'placed', contracts: symbols, result: decodeMcpResult(raw) })
-      io.stderr.write(`orders: placed ${order.structure} x${order.contracts} [${symbols.join(', ')}]\n`)
+      if (order.intent === 'sell_to_close') {
+        for (const [index, leg] of resolved.entries()) {
+          const closeOrder = { ...order, contracts: leg.contracts, client_order_id: `${order.client_order_id}-close-${index + 1}` }
+          const raw = await client.callTool({ name: PLACE_TOOL, arguments: buildPlaceArgs(leg, closeOrder) })
+          results.push({ order: closeOrder, status: 'placed', contracts: [leg.symbol], result: decodeMcpResult(raw) })
+        }
+        io.stderr.write(`orders: placed protective_put close x${order.contracts} [${resolved.map((r) => r.symbol).join(', ')}]\n`)
+      } else {
+        const args = resolved.length === 1
+          ? buildPlaceArgs(resolved[0], order)
+          : buildMlegArgs(order, resolved)
+        const raw = await client.callTool({ name: PLACE_TOOL, arguments: args })
+        const symbols = resolved.map((r) => r.symbol)
+        results.push({ order, status: 'placed', contracts: symbols, result: decodeMcpResult(raw) })
+        io.stderr.write(`orders: placed ${order.structure} x${order.contracts} [${symbols.join(', ')}]\n`)
+      }
     } catch (error) {
       results.push({ order, status: 'failed', reason: error instanceof Error ? error.message : String(error) })
       io.stderr.write(`orders: FAILED to place ${order.structure}: ${error}\n`)
