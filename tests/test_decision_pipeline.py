@@ -216,7 +216,7 @@ class DecisionPipelineTests(unittest.TestCase):
             )
             self.assertEqual(accepted["execution"]["mode"], "autonomous-paper")
 
-    def test_autonomous_options_policy_rejects_close_orders_before_submission(self):
+    def test_autonomous_options_policy_rejects_non_protective_close_orders_before_submission(self):
         from agent.cli import main
 
         ctx = context("stressed")
@@ -228,12 +228,13 @@ class DecisionPipelineTests(unittest.TestCase):
             record_autonomous_authorization(path, "auto-close")
             row = json.loads(path.read_text().splitlines()[0])
             row["gate"]["orders"][0]["intent"] = "sell_to_close"
+            row["gate"]["orders"][0]["structure"] = "iron_condor"
             path.write_text(json.dumps(row) + "\n")
             import sys
             saved = sys.argv
             try:
                 sys.argv = ["agent.cli", "prepare-submission", "--ledger", str(path), "--decision-id", "auto-close", "--autonomous-options-overlay"]
-                with self.assertRaisesRegex(ValueError, "never closes"):
+                with self.assertRaisesRegex(ValueError, "limited to recorded protective puts"):
                     main()
             finally:
                 sys.argv = saved

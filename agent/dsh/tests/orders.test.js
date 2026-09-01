@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { occSymbol, resolveHedgeContract, buildPlaceArgs, placeGateOrders } from '../alpaca-orders.js'
+import { occSymbol, resolveHedgeContract, resolveHeldProtectivePut, buildPlaceArgs, placeGateOrders } from '../alpaca-orders.js'
 
 const NOW = new Date(Date.UTC(2024, 8, 6)) // 2024-09-06
 
@@ -41,6 +41,18 @@ test('buildPlaceArgs omits client_order_id when absent', () => {
   assert.equal(args.qty, '2')
   assert.equal(args.position_intent, 'sell_to_close')
   assert.equal(args.client_order_id, undefined)
+})
+
+test('resolveHeldProtectivePut closes only a positive held SPY put with sufficient quantity', () => {
+  const order = { symbol: 'SPY', strike: 520, expiry_days: 5, contracts: 2 }
+  const now = new Date(Date.UTC(2024, 8, 16))
+  const resolved = resolveHeldProtectivePut([
+    { symbol: 'SPY240920P00520000', qty: '2' },
+    { symbol: 'SPY240920C00520000', qty: '10' },
+    { symbol: 'SPY240920P00510000', qty: '1' },
+  ], order, now)
+  assert.equal(resolved.symbol, 'SPY240920P00520000')
+  assert.throws(() => resolveHeldProtectivePut([{ symbol: 'SPY240920P00520000', qty: '1' }], order, now), /no positive held/)
 })
 
 test('placeGateOrders places the single-leg hedge and the 4-leg iron condor', async () => {

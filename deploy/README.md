@@ -37,8 +37,10 @@ owners.
 The persisted DSH profile, sessions, contexts, and ledger survive container
 replacement on the Volume. The deployed heartbeat is armed only for one `SPY`
 options-overlay order per eligible live cycle: a protective put, covered call, or
-iron condor. It cannot place an equity/core-book order, a multi-order batch, or a
-`sell_to_close` order. Before every write it records autonomous-policy provenance,
+iron condor; it may also close a protective put only after resolving a positive held
+OCC contract with sufficient quantity from the broker. It cannot place an
+equity/core-book order, a multi-order batch, or close income structures
+autonomously. Before every write it records autonomous-policy provenance,
 revalidates the fresh live snapshot, and keeps the broker client order ID for
 reconciliation. The authenticated UI remains available for human-mode proposals.
 

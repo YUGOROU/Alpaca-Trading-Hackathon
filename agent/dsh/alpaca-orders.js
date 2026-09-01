@@ -59,6 +59,40 @@ function parseOccExpiry(occ) {
   return new Date(Date.UTC(2000 + Number(ymd.slice(0, 2)), Number(ymd.slice(2, 4)) - 1, Number(ymd.slice(4, 6))))
 }
 
+function positionRows(value) {
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.positions)) return value.positions
+  if (Array.isArray(value?.data)) return value.data
+  return []
+}
+
+// A hedge reduction is abstract at the risk-gate layer. Resolve it only from
+// a positive broker position at execution time; never synthesize an OCC symbol.
+export function resolveHeldProtectivePut(positions, order, now = new Date()) {
+  const requested = Number(order.contracts)
+  if (!Number.isInteger(requested) || requested <= 0) {
+    throw new Error('close order requires a positive whole contract quantity')
+  }
+  let best = null
+  for (const row of positionRows(positions)) {
+    const symbol = String(row?.symbol ?? row?.asset_symbol ?? '')
+    const qty = Number(row?.qty ?? row?.quantity ?? 0)
+    if (!Number.isFinite(qty) || qty < requested) continue
+    if (!symbol.startsWith(String(order.symbol).toUpperCase()) || symbol.length < 15 || symbol.at(-9) !== 'P') continue
+    let expiry
+    try { expiry = parseOccExpiry(symbol) } catch { continue }
+    const days = Math.round((expiry - now) / 86_400_000)
+    if (days <= 0) continue
+    const strike = Number(symbol.slice(-8)) / 1000
+    const score = [Math.abs(days - Number(order.expiry_days)), Math.abs(strike - Number(order.strike))]
+    if (best === null || score[0] < best.score[0] || (score[0] === best.score[0] && score[1] < best.score[1])) {
+      best = { symbol, strike, expiry, score }
+    }
+  }
+  if (best === null) throw new Error('no positive held SPY protective put can satisfy the close order')
+  return best
+}
+
 // Resolve one leg (right P/C + target strike + target DTE) to a real listed contract by
 // scanning the option-chain snapshot for the nearest expiry, then the nearest strike.
 // Returns { symbol, strike, expiry } or throws — we never place an unresolved contract.
@@ -156,6 +190,10 @@ export async function fetchOptionChain(client, type) {
   return decodeMcpResult(raw) || {}
 }
 
+export async function fetchOptionPositions(client) {
+  return decodeMcpResult(await client.callTool({ name: 'get_all_positions', arguments: {} })) || []
+}
+
 export async function placeGateOrders(client, gateOrders, optionChain, io = { stderr: process.stderr }) {
   const results = []
   for (const order of gateOrders) {
@@ -166,10 +204,12 @@ export async function placeGateOrders(client, gateOrders, optionChain, io = { st
     }
     try {
       // Resolve every leg first — a partially-resolved structure is never sent (fail-closed).
-      const resolved = legSpecs(order).map((leg) => ({
-        ...resolveContract(optionChain, leg.right, leg.strike, order.expiry_days),
-        action: leg.action,
-      }))
+      const resolved = order.intent === 'sell_to_close'
+        ? [{ ...resolveHeldProtectivePut(await fetchOptionPositions(client), order), action: 'sell' }]
+        : legSpecs(order).map((leg) => ({
+          ...resolveContract(optionChain, leg.right, leg.strike, order.expiry_days),
+          action: leg.action,
+        }))
       const args = resolved.length === 1
         ? buildPlaceArgs(resolved[0], order)
         : buildMlegArgs(order, resolved)

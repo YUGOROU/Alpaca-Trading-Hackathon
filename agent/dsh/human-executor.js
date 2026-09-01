@@ -6,8 +6,9 @@
  * A request is fail-closed unless the Python ledger records an approved proposal
  * and a fresh Alpaca REST revalidation succeeds immediately before this process
  * opens the paper-only Alpaca MCP transport.  The initial operational slice
- * deliberately accepts exactly one gate order, so a manual validation cannot
- * accidentally submit a portfolio-sized batch.
+ * deliberately accepts exactly one gate order, so a heartbeat cannot
+ * accidentally submit a portfolio-sized batch. A close is permitted only for
+ * a positive, held SPY protective-put contract resolved at execution time.
  */
 import { execFileSync } from 'node:child_process'
 import { connectAlpacaOrders, fetchOptionChain, placeGateOrders } from './alpaca-orders.js'
@@ -41,8 +42,11 @@ function assertAutonomousOptionsOverlay(orders) {
   if (order.symbol !== 'SPY') {
     throw new Error('autonomous options execution permits only SPY overlays')
   }
-  if (!['buy_to_open', 'sell_to_open'].includes(order.intent)) {
-    throw new Error('autonomous options execution never closes or trades an equity position')
+  if (!['buy_to_open', 'sell_to_open', 'sell_to_close'].includes(order.intent)) {
+    throw new Error('autonomous options execution permits only bounded opening or protective-put close orders')
+  }
+  if (order.intent === 'sell_to_close' && order.structure !== 'protective_put') {
+    throw new Error('autonomous close orders are limited to recorded protective puts')
   }
 }
 
