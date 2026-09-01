@@ -215,12 +215,12 @@ export function executableOrderPrice(order, resolvedLegs) {
   return { limitPrice: priceString(netDebit), netDebit }
 }
 
-// Fetch a fresh P or C chain for SPY through the order client (has options-data). Placement
-// resolves its own contracts (both rights) rather than the read-only snapshot's puts-only view.
-export async function fetchOptionChain(client, type) {
+// Fetch a fresh P or C chain for the gate-approved underlying through the order client.
+// Placement resolves its own contracts rather than the read-only snapshot's puts-only view.
+export async function fetchOptionChain(client, type, underlyingSymbol = 'SPY') {
   const raw = await client.callTool({
     name: 'get_option_chain',
-    arguments: { underlying_symbol: 'SPY', feed: 'indicative', limit: 250, type },
+    arguments: { underlying_symbol: underlyingSymbol, feed: 'indicative', limit: 250, type },
   })
   return decodeMcpResult(raw) || {}
 }

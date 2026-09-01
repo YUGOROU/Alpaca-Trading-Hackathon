@@ -35,6 +35,7 @@ from .live_context import _live_source_and_state, build_live_context, build_mock
 from .revalidation import revalidate_live_context
 from .scenarios import get_scenario
 
+AUTONOMOUS_OPTIONS_SYMBOLS = frozenset({"SPY", "AAPL", "MSFT", "NVDA", "DELL"})
 
 def _add_mode(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group(required=True)
@@ -156,8 +157,10 @@ def main() -> int:
             order = orders[0]
             if order.get("structure") not in {"protective_put", "covered_call", "iron_condor"}:
                 raise ValueError("autonomous execution permits only known options-overlay structures")
-            if order.get("symbol") != "SPY":
-                raise ValueError("autonomous options execution permits only SPY overlays")
+            if order.get("symbol") not in AUTONOMOUS_OPTIONS_SYMBOLS:
+                raise ValueError("autonomous options execution permits only approved overlays")
+            if order.get("symbol") != "SPY" and order.get("structure") != "covered_call":
+                raise ValueError("single-name autonomous overlays permit covered calls only")
             if order.get("intent") not in {"buy_to_open", "sell_to_open"}:
                 raise ValueError("autonomous options execution permits only bounded opening orders")
         source, _state = _live_source_and_state()
