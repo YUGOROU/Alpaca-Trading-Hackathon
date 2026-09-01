@@ -13,6 +13,7 @@ import { execFileSync } from 'node:child_process'
 import { connectAlpacaOrders, fetchOptionChain, placeGateOrders } from './alpaca-orders.js'
 
 const AUTONOMOUS_OPTIONS_STRUCTURES = new Set(['protective_put', 'covered_call', 'iron_condor'])
+const AUTONOMOUS_OPTIONS_SYMBOLS = new Set(['SPY', 'AAPL', 'MSFT', 'NVDA', 'DELL'])
 
 function usage() {
   process.stderr.write('usage: human-executor.js --ledger PATH --decision-id ID [--execution-mode human|autonomous-paper]\n')
@@ -38,8 +39,11 @@ function assertAutonomousOptionsOverlay(orders) {
   if (!AUTONOMOUS_OPTIONS_STRUCTURES.has(order?.structure)) {
     throw new Error('autonomous execution permits only known options-overlay structures')
   }
-  if (order.symbol !== 'SPY') {
-    throw new Error('autonomous options execution permits only SPY overlays')
+  if (!AUTONOMOUS_OPTIONS_SYMBOLS.has(order.symbol)) {
+    throw new Error('autonomous options execution permits only approved overlays')
+  }
+  if (order.symbol !== 'SPY' && order.structure !== 'covered_call') {
+    throw new Error('single-name autonomous overlays permit covered calls only')
   }
   if (!['buy_to_open', 'sell_to_open'].includes(order.intent)) {
     throw new Error('autonomous options execution permits only bounded opening orders')
@@ -92,8 +96,9 @@ async function main() {
     ])
     if (executionMode === 'autonomous-paper') assertAutonomousOptionsOverlay(prepared.orders)
     connection = await connectAlpacaOrders(process.env)
-    const puts = await fetchOptionChain(connection.client, 'put')
-    const calls = await fetchOptionChain(connection.client, 'call')
+    const [order] = prepared.orders
+    const puts = await fetchOptionChain(connection.client, 'put', order.symbol)
+    const calls = await fetchOptionChain(connection.client, 'call', order.symbol)
     const results = await placeGateOrders(
       connection.client,
       prepared.orders,

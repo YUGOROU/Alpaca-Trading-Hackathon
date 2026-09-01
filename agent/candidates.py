@@ -13,6 +13,7 @@ from risk_engine.payoffs import stress_pnl
 from .contracts import CandidateTradeoffs, DecisionCandidate, DecisionContext
 from .limits import MAX_HEDGE_COST_DRAG
 
+AUTONOMOUS_COVERED_CALL_SYMBOLS = ("AAPL", "MSFT", "NVDA", "DELL")
 
 def _empty_income() -> IncomePlan:
     return IncomePlan(
@@ -26,20 +27,23 @@ def _empty_income() -> IncomePlan:
     )
 
 
-def _single_leg_income(income: IncomePlan, *, symbol: str, equity: float) -> IncomePlan:
-    """Keep the autonomous income surface to one defined-risk SPY overlay.
+def _single_leg_income(income: IncomePlan, *, index_symbol: str, equity: float) -> IncomePlan:
+    """Keep the autonomous income surface to exactly one approved overlay.
 
-    The human workflow may propose several covered calls alongside an index
-    condor.  The autonomous executor deliberately has a one-order contract, so
-    it must never be offered that aggregate plan.
+    A named covered call is eligible only when ``plan_income`` found at least
+    100 held shares. The live revalidation then requires positions to remain
+    unchanged before submission. Otherwise retain the single index condor.
     """
-    leg = next(
-        (
+    leg = next((
+        item for symbol in AUTONOMOUS_COVERED_CALL_SYMBOLS
+        for item in income.legs
+        if item.kind == "covered_call" and item.symbol == symbol
+    ), None)
+    if leg is None:
+        leg = next((
             item for item in income.legs
-            if item.kind == "iron_condor" and item.symbol == symbol
-        ),
-        None,
-    )
+            if item.kind == "iron_condor" and item.symbol == index_symbol
+        ), None)
     if leg is None:
         return _empty_income()
     annualized_yield = (
@@ -165,7 +169,7 @@ def build_decision_context(
         income = plan_income(portfolio, market, snapshot, expiry_days=expiry_days)
         if execution_mode == "autonomous-paper":
             income = _single_leg_income(
-                income, symbol=market.index_symbol, equity=portfolio.equity,
+                income, index_symbol=market.index_symbol, equity=portfolio.equity,
             )
         if income.legs:
             income_snapshot = replace(snapshot, target_coverage=0.0)

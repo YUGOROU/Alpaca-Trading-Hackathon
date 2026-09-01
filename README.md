@@ -372,17 +372,18 @@ temperature 0, harness-owned decision ids.
 
 Packaged as a durable **Modal** app — an always-on CPU container that owns the heartbeat and
 exposes an HTTP liveness probe. The deployed runtime mounts a dedicated **paper-only** Alpaca
-Secret and can execute one gate-approved, opening SPY overlay per eligible cycle: a protective
-put, covered call, or iron condor. It cannot trade the Core Book, use a live account, choose
-arbitrary symbols or sizes, submit batches, or close option structures autonomously. A later
+Secret and can execute one gate-approved opening overlay per eligible cycle: a SPY protective
+put, covered call, or iron condor, or a covered call on an approved held name (AAPL, MSFT, NVDA,
+or DELL). It cannot trade the Core Book, use a live account, choose arbitrary symbols or sizes,
+submit batches, or close option structures autonomously. A later
 close/roll slice requires contract-level ledger provenance so it cannot confuse a hedge with an
 income-spread leg.
 
 Before an autonomous write, the executor resolves the listed contracts again, derives the
 worst executable bid/ask price, rechecks the hedge-cost or condor defined-risk cap, and sends a
 bounded limit (or signed net-credit multi-leg limit) order. Missing quotes or a breached cap stop
-the cycle without an order. Autonomous income exposes only one SPY iron-condor candidate; it does
-not batch Core Book covered calls.
+the cycle without an order. Autonomous income exposes only one overlay: first an eligible covered
+call on an approved held name (100 shares required), otherwise a SPY iron condor.
 
 Each accepted autonomous protective-put open is recorded in an append-only contract-provenance
 sidecar with its exact OCC contract, quantity, broker order id, strategy, and leg role. This is

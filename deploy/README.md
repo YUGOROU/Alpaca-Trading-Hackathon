@@ -36,16 +36,17 @@ owners.
 
 The persisted DSH profile, sessions, contexts, and ledger survive container
 replacement on the Volume. The deployed heartbeat is armed only for one `SPY`
-options-overlay order per eligible live cycle: a protective put, covered call, or
-iron condor. It cannot place an equity/core-book order, a multi-order batch, or
+options-overlay order per eligible live cycle: a SPY protective put, covered call, or
+iron condor, or a covered call on AAPL, MSFT, NVDA, or DELL when at least 100 shares are held.
+It cannot place an equity/core-book order, a multi-order batch, or
 close option structures autonomously. Contract-level ledger provenance is required
 before a future autonomous close/roll slice can distinguish protective puts from
 income-spread legs. Before every write it records autonomous-policy provenance,
 revalidates the fresh live snapshot, and keeps the broker client order ID for
 reconciliation. It resolves fresh executable bid/ask quotes, re-gates the hedge-cost or defined-
 risk cap, and submits only a bounded limit/net-credit limit order; missing quotes or a breached
-cap fail closed. Autonomous income is a single SPY iron-condor candidate, never a covered-call
-batch. The authenticated UI remains available for human-mode proposals.
+cap fail closed. Autonomous income is a single overlay: an eligible named covered call, otherwise
+a SPY iron condor. The authenticated UI remains available for human-mode proposals.
 
 After deployment, run the non-mutating paper-read probe before approving any
 proposal:

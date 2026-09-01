@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { occSymbol, resolveHedgeContract, buildPlaceArgs, executableOrderPrice, placeGateOrders } from '../alpaca-orders.js'
+import { occSymbol, resolveHedgeContract, buildPlaceArgs, executableOrderPrice, fetchOptionChain, placeGateOrders } from '../alpaca-orders.js'
 
 const NOW = new Date(Date.UTC(2024, 8, 6)) // 2024-09-06
 
@@ -41,6 +41,13 @@ test('buildPlaceArgs omits client_order_id when absent', () => {
   assert.equal(args.qty, '2')
   assert.equal(args.position_intent, 'sell_to_close')
   assert.equal(args.client_order_id, undefined)
+})
+
+test('fetchOptionChain uses the gate-approved underlying', async () => {
+  const calls = []
+  const client = { async callTool(req) { calls.push(req); return { structuredContent: {} } } }
+  await fetchOptionChain(client, 'call', 'NVDA')
+  assert.equal(calls[0].arguments.underlying_symbol, 'NVDA')
 })
 
 test('autonomous hedge prices at the current ask and rejects a cost-cap breach', () => {

@@ -20,6 +20,7 @@ from agent.ledger import (
     record_submission_requested,
 )
 from agent.scenarios import get_scenario
+from risk_engine import Portfolio, Position
 
 
 def context(name: str):
@@ -129,6 +130,26 @@ class DecisionPipelineTests(unittest.TestCase):
         self.assertTrue(gate.approved)
         self.assertEqual(len(gate.orders), 1)
         self.assertEqual(gate.orders[0]["structure"], "iron_condor")
+
+    def test_autonomous_income_prefers_one_covered_call_on_an_approved_held_name(self):
+        _portfolio, market = get_scenario("calm")
+        portfolio = Portfolio(
+            positions=[Position("AAPL", shares=100.0, price=200.0, beta=1.15)],
+            cash=80_000.0,
+            peak_equity=100_000.0,
+        )
+        autonomous = build_decision_context(
+            portfolio, market, scenario_id="aapl-covered", execution_mode="autonomous-paper",
+        )
+        income = next(candidate for candidate in autonomous.candidates if candidate.candidate_id == "harvest_income")
+        [leg] = income.plan.income.legs
+        self.assertEqual((leg.kind, leg.symbol, leg.contracts), ("covered_call", "AAPL", 1))
+        gate = validate_decision(
+            autonomous,
+            AgentDecision(autonomous.context_id, "harvest_income", "Covered by held AAPL shares."),
+        )
+        self.assertEqual(len(gate.orders), 1)
+        self.assertEqual((gate.orders[0]["structure"], gate.orders[0]["symbol"]), ("covered_call", "AAPL"))
 
     def test_dry_run_ledger_is_idempotent_by_decision_id(self):
         ctx = context("elevated")
