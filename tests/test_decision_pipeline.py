@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from agent import AgentDecision, build_decision_context, validate_decision
 from agent.ledger import (
@@ -84,6 +87,31 @@ class DecisionPipelineTests(unittest.TestCase):
             _scenario_context("stressed", execution_mode="autonomous-paper").context_id,
         )
         self.assertNotEqual(autonomous.context_id, _scenario_context("stressed").context_id)
+
+    def test_submit_cannot_relabel_a_human_context_as_autonomous(self):
+        from agent.cli import main
+        import sys
+
+        human = context("stressed")
+        with tempfile.TemporaryDirectory() as tmp:
+            ledger = Path(tmp) / "decisions.jsonl"
+            saved = sys.argv
+            output = StringIO()
+            try:
+                sys.argv = [
+                    "agent.cli", "submit", "--mock", "--context-id", human.context_id,
+                    "--candidate-id", "full_hedge", "--reason", "Attempt mode switch.",
+                    "--decision-id", "mode-mismatch", "--ledger", str(ledger),
+                    "--execution-mode", "autonomous-paper",
+                ]
+                with patch("agent.cli.rebuild_observed_context", return_value=human), redirect_stdout(output):
+                    self.assertEqual(main(), 2)
+            finally:
+                sys.argv = saved
+            row = json.loads(output.getvalue())
+            self.assertEqual(row["execution"]["mode"], "human")
+            self.assertEqual(row["execution"]["state"], "rejected")
+            self.assertIn("execution_mode_mismatch", row["gate"]["reasons"])
 
     def test_autonomous_income_candidate_is_one_spy_condor_order(self):
         portfolio, market = get_scenario("calm")

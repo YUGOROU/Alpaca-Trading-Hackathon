@@ -259,11 +259,19 @@ def main() -> int:
         # replacement observation during submission.  Record the rejection so it
         # remains auditable without turning a stale decision into a fresh one.
         result = GateResult("rejected", args.context_id, args.candidate_id, ("stale_or_unknown_context",), ())
+        execution_mode = validate_execution_mode(args.execution_mode)
+    elif context.execution_mode != args.execution_mode:
+        # The mode is part of the context identity and its approval contract.
+        # Never let a submit-time flag relabel a human-reviewed context as an
+        # autonomous proposal (or vice versa).
+        result = GateResult("rejected", args.context_id, args.candidate_id, ("execution_mode_mismatch",), ())
+        execution_mode = context.execution_mode
     else:
         result = validate_decision(context, decision)
+        execution_mode = context.execution_mode
     row = record_dry_run(
         args.ledger, args.decision_id, scenario_id, decision, result,
-        execution_mode=validate_execution_mode(args.execution_mode),
+        execution_mode=execution_mode,
     )
     print(json.dumps(row, sort_keys=True))
     return 0 if result.approved else 2
