@@ -196,9 +196,15 @@ export function executableOrderPrice(order, resolvedLegs) {
     (total, leg) => total + (leg.action === 'buy' ? leg.price : -leg.price), 0,
   )
   if (order.structure === 'iron_condor') {
+    const putShort = legPrices.find((leg) => leg.right === 'P' && leg.action === 'sell')
+    const putLong = legPrices.find((leg) => leg.right === 'P' && leg.action === 'buy')
+    const callShort = legPrices.find((leg) => leg.right === 'C' && leg.action === 'sell')
+    const callLong = legPrices.find((leg) => leg.right === 'C' && leg.action === 'buy')
+    // Contract resolution can snap the model's target to a listed strike. Risk
+    // must use those actual strikes, never the pre-resolution target values.
     const width = Math.max(
-      Number(order.short_strike) - Number(order.long_strike),
-      Number(order.call_long_strike) - Number(order.call_short_strike),
+      Number(putShort?.strike) - Number(putLong?.strike),
+      Number(callLong?.strike) - Number(callShort?.strike),
     )
     const totalLoss = (width + netDebit) * 100 * order.contracts
     const cap = Number(order.max_total_loss)
@@ -233,7 +239,7 @@ export async function placeGateOrders(
       // Resolve every leg first — a partially-resolved structure is never sent (fail-closed).
       const resolved = legSpecs(order).map((leg) => {
         const contract = resolveContract(optionChain, leg.right, leg.strike, order.expiry_days)
-        return { ...contract, action: leg.action, snapshot: optionChain[contract.symbol] }
+        return { ...contract, right: leg.right, action: leg.action, snapshot: optionChain[contract.symbol] }
       })
       const executable = executablePrices ? executableOrderPrice(order, resolved) : null
       const args = resolved.length === 1

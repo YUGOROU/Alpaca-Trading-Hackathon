@@ -58,19 +58,21 @@ test('autonomous hedge prices at the current ask and rejects a cost-cap breach',
 
 test('autonomous condor uses a net-credit limit and re-gates max loss', () => {
   const legs = [
-    { symbol: 'SPY991220P00520000', action: 'sell', snapshot: { latestQuote: { bid_price: 1.80 } } },
-    { symbol: 'SPY991220P00510000', action: 'buy', snapshot: { latestQuote: { ask_price: 0.70 } } },
-    { symbol: 'SPY991220C00580000', action: 'sell', snapshot: { latestQuote: { bp: 1.70 } } },
-    { symbol: 'SPY991220C00590000', action: 'buy', snapshot: { latestQuote: { ap: 0.60 } } },
+    { symbol: 'SPY991220P00525000', right: 'P', strike: 525, action: 'sell', snapshot: { latestQuote: { bid_price: 1.80 } } },
+    { symbol: 'SPY991220P00505000', right: 'P', strike: 505, action: 'buy', snapshot: { latestQuote: { ask_price: 0.70 } } },
+    { symbol: 'SPY991220C00575000', right: 'C', strike: 575, action: 'sell', snapshot: { latestQuote: { bp: 1.70 } } },
+    { symbol: 'SPY991220C00595000', right: 'C', strike: 595, action: 'buy', snapshot: { latestQuote: { ap: 0.60 } } },
   ]
   const order = {
     structure: 'iron_condor', contracts: 1, short_strike: 520, long_strike: 510,
-    call_short_strike: 580, call_long_strike: 590, max_total_loss: 800,
+    // Target strikes imply a $780 loss. Listed contracts resolve to $20-wide
+    // wings, so a gate based on targets would understate the $1,780 exposure.
+    call_short_strike: 580, call_long_strike: 590, max_total_loss: 1_800,
   }
   const executable = executableOrderPrice(order, legs)
   assert.equal(executable.limitPrice, '-2.20')
   assert.throws(
-    () => executableOrderPrice({ ...order, max_total_loss: 779 }, legs),
+    () => executableOrderPrice({ ...order, max_total_loss: 1_700 }, legs),
     /loss exceeds deterministic cap/,
   )
 })
