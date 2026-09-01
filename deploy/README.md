@@ -42,7 +42,10 @@ close option structures autonomously. Contract-level ledger provenance is requir
 before a future autonomous close/roll slice can distinguish protective puts from
 income-spread legs. Before every write it records autonomous-policy provenance,
 revalidates the fresh live snapshot, and keeps the broker client order ID for
-reconciliation. The authenticated UI remains available for human-mode proposals.
+reconciliation. It resolves fresh executable bid/ask quotes, re-gates the hedge-cost or defined-
+risk cap, and submits only a bounded limit/net-credit limit order; missing quotes or a breached
+cap fail closed. Autonomous income is a single SPY iron-condor candidate, never a covered-call
+batch. The authenticated UI remains available for human-mode proposals.
 
 After deployment, run the non-mutating paper-read probe before approving any
 proposal:

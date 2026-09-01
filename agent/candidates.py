@@ -26,6 +26,37 @@ def _empty_income() -> IncomePlan:
     )
 
 
+def _single_leg_income(income: IncomePlan, *, symbol: str, equity: float) -> IncomePlan:
+    """Keep the autonomous income surface to one defined-risk SPY overlay.
+
+    The human workflow may propose several covered calls alongside an index
+    condor.  The autonomous executor deliberately has a one-order contract, so
+    it must never be offered that aggregate plan.
+    """
+    leg = next(
+        (
+            item for item in income.legs
+            if item.kind == "iron_condor" and item.symbol == symbol
+        ),
+        None,
+    )
+    if leg is None:
+        return _empty_income()
+    annualized_yield = (
+        (leg.credit / equity) * (365.0 / leg.expiry_days)
+        if equity and leg.expiry_days else 0.0
+    )
+    return IncomePlan(
+        legs=[leg],
+        total_credit=leg.credit,
+        total_max_loss=leg.max_loss,
+        capital_reserved=leg.capital_reserved,
+        net_theta_per_day=leg.theta_per_day,
+        aggressiveness=income.aggressiveness,
+        annualized_yield=annualized_yield,
+    )
+
+
 def _strategy(posture: str, income: IncomePlan, hedge) -> StrategyPlan:
     hedge_theta = hedge.theta_per_day * hedge.contracts_target
     return StrategyPlan(
@@ -132,6 +163,10 @@ def build_decision_context(
 
     if snapshot.risk_score < 40.0 and not income_open:
         income = plan_income(portfolio, market, snapshot, expiry_days=expiry_days)
+        if execution_mode == "autonomous-paper":
+            income = _single_leg_income(
+                income, symbol=market.index_symbol, equity=portfolio.equity,
+            )
         if income.legs:
             income_snapshot = replace(snapshot, target_coverage=0.0)
             income_hedge = plan_hedge(

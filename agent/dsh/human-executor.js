@@ -94,7 +94,13 @@ async function main() {
     connection = await connectAlpacaOrders(process.env)
     const puts = await fetchOptionChain(connection.client, 'put')
     const calls = await fetchOptionChain(connection.client, 'call')
-    const results = await placeGateOrders(connection.client, prepared.orders, { ...puts, ...calls })
+    const results = await placeGateOrders(
+      connection.client,
+      prepared.orders,
+      { ...puts, ...calls },
+      undefined,
+      { executablePrices: executionMode === 'autonomous-paper' },
+    )
     const placed = results.filter(result => result.status === 'placed')
     if (placed.length !== 1 || results.length !== 1) {
       throw new Error('MCP did not place exactly one approved order')

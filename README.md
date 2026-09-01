@@ -378,6 +378,12 @@ arbitrary symbols or sizes, submit batches, or close option structures autonomou
 close/roll slice requires contract-level ledger provenance so it cannot confuse a hedge with an
 income-spread leg.
 
+Before an autonomous write, the executor resolves the listed contracts again, derives the
+worst executable bid/ask price, rechecks the hedge-cost or condor defined-risk cap, and sends a
+bounded limit (or signed net-credit multi-leg limit) order. Missing quotes or a breached cap stop
+the cycle without an order. Autonomous income exposes only one SPY iron-condor candidate; it does
+not batch Core Book covered calls.
+
 Each accepted autonomous protective-put open is recorded in an append-only contract-provenance
 sidecar with its exact OCC contract, quantity, broker order id, strategy, and leg role. This is
 the source of intent for a future close/roll gate; the broker remains the source of truth.

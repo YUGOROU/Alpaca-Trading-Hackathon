@@ -85,6 +85,23 @@ class DecisionPipelineTests(unittest.TestCase):
         )
         self.assertNotEqual(autonomous.context_id, _scenario_context("stressed").context_id)
 
+    def test_autonomous_income_candidate_is_one_spy_condor_order(self):
+        portfolio, market = get_scenario("calm")
+        autonomous = build_decision_context(
+            portfolio, market, scenario_id="calm", execution_mode="autonomous-paper",
+        )
+        income = next(candidate for candidate in autonomous.candidates if candidate.candidate_id == "harvest_income")
+        self.assertEqual(len(income.plan.income.legs), 1)
+        self.assertEqual(income.plan.income.legs[0].kind, "iron_condor")
+        self.assertEqual(income.plan.income.legs[0].symbol, "SPY")
+        gate = validate_decision(
+            autonomous,
+            AgentDecision(autonomous.context_id, "harvest_income", "Single bounded SPY overlay."),
+        )
+        self.assertTrue(gate.approved)
+        self.assertEqual(len(gate.orders), 1)
+        self.assertEqual(gate.orders[0]["structure"], "iron_condor")
+
     def test_dry_run_ledger_is_idempotent_by_decision_id(self):
         ctx = context("elevated")
         decision = AgentDecision(

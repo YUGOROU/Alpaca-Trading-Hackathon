@@ -35,6 +35,10 @@ gate-approved, paper-only SPY overlay per eligible live cycle after separate pol
 authorization and fresh broker revalidation. It can open a protective put, covered
 call, or iron condor. It cannot trade equities, arbitrary symbols, batches, or close
 option structures; a future close/roll slice needs contract-level ledger provenance.
+For an autonomous write it resolves fresh bid/ask quotes, re-gates the price-derived hedge-cost
+or defined-risk cap, and uses a bounded limit/net-credit limit order; absent quotes or a breached
+cap fail closed. Autonomous income is one SPY iron-condor candidate, never a batch of covered
+calls.
 `--place` remains rejected because execution is controlled
 only by the deployed `PAPER_EXECUTION_MODE=autonomous-options-overlay` policy.
 

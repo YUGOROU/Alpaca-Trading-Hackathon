@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { occSymbol, resolveHedgeContract, buildPlaceArgs, placeGateOrders } from '../alpaca-orders.js'
+import { occSymbol, resolveHedgeContract, buildPlaceArgs, executableOrderPrice, placeGateOrders } from '../alpaca-orders.js'
 
 const NOW = new Date(Date.UTC(2024, 8, 6)) // 2024-09-06
 
@@ -41,6 +41,51 @@ test('buildPlaceArgs omits client_order_id when absent', () => {
   assert.equal(args.qty, '2')
   assert.equal(args.position_intent, 'sell_to_close')
   assert.equal(args.client_order_id, undefined)
+})
+
+test('autonomous hedge prices at the current ask and rejects a cost-cap breach', () => {
+  const resolved = [{ symbol: 'SPY991220P00520000', action: 'buy', snapshot: { latest_quote: { ask_price: 2.25 } } }]
+  const order = { structure: 'protective_put', contracts: 2, max_total_cost: 500 }
+  const executable = executableOrderPrice(order, resolved)
+  const args = buildPlaceArgs(resolved[0], { intent: 'buy_to_open', contracts: 2 }, executable)
+  assert.equal(args.type, 'limit')
+  assert.equal(args.limit_price, '2.25')
+  assert.throws(
+    () => executableOrderPrice({ ...order, max_total_cost: 449 }, resolved),
+    /cost exceeds deterministic cap/,
+  )
+})
+
+test('autonomous condor uses a net-credit limit and re-gates max loss', () => {
+  const legs = [
+    { symbol: 'SPY991220P00520000', action: 'sell', snapshot: { latestQuote: { bid_price: 1.80 } } },
+    { symbol: 'SPY991220P00510000', action: 'buy', snapshot: { latestQuote: { ask_price: 0.70 } } },
+    { symbol: 'SPY991220C00580000', action: 'sell', snapshot: { latestQuote: { bp: 1.70 } } },
+    { symbol: 'SPY991220C00590000', action: 'buy', snapshot: { latestQuote: { ap: 0.60 } } },
+  ]
+  const order = {
+    structure: 'iron_condor', contracts: 1, short_strike: 520, long_strike: 510,
+    call_short_strike: 580, call_long_strike: 590, max_total_loss: 800,
+  }
+  const executable = executableOrderPrice(order, legs)
+  assert.equal(executable.limitPrice, '-2.20')
+  assert.throws(
+    () => executableOrderPrice({ ...order, max_total_loss: 779 }, legs),
+    /loss exceeds deterministic cap/,
+  )
+})
+
+test('autonomous orders fail closed without an executable quote', async () => {
+  const calls = []
+  const client = { async callTool(req) { calls.push(req); return { structuredContent: { ok: true } } } }
+  const chain = { SPY991220P00520000: {} }
+  const results = await placeGateOrders(client, [{
+    structure: 'protective_put', symbol: 'SPY', strike: 520, expiry_days: 5,
+    contracts: 1, intent: 'buy_to_open', max_total_cost: 1_000,
+  }], chain, { stderr: { write() {} } }, { executablePrices: true })
+  assert.equal(results[0].status, 'failed')
+  assert.match(results[0].reason, /missing executable ask/)
+  assert.equal(calls.length, 0)
 })
 
 test('placeGateOrders places the single-leg hedge and the 4-leg iron condor', async () => {

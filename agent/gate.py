@@ -26,6 +26,9 @@ def _orders(context: DecisionContext, candidate) -> tuple[dict, ...]:
             "expiry_days": leg.expiry_days,
             "short_strike": leg.short_strike,
             "long_strike": leg.long_strike,
+            # Rechecked from current executable bid/ask immediately before a
+            # paper order is submitted; never trust the theoretical premium.
+            "max_total_loss": context.snapshot.equity * MAX_DEFINED_RISK_FRACTION,
         }
         # An iron condor is 4 legs: describe the CALL side too, or the placer can only
         # see the put spread and would submit an incomplete structure.
@@ -45,6 +48,9 @@ def _orders(context: DecisionContext, candidate) -> tuple[dict, ...]:
             "contracts": abs(hedge.contracts_delta),
             "expiry_days": hedge.put_expiry_days,
             "strike": hedge.put_strike,
+            # The proposal's Black-Scholes premium only admitted this hedge
+            # under the cap. The executor must re-gate using the live ask.
+            "max_total_cost": context.snapshot.equity * MAX_HEDGE_COST_DRAG,
         })
     return tuple(orders)
 
