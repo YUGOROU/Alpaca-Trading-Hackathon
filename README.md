@@ -378,6 +378,10 @@ arbitrary symbols or sizes, submit batches, or close option structures autonomou
 close/roll slice requires contract-level ledger provenance so it cannot confuse a hedge with an
 income-spread leg.
 
+Each accepted autonomous protective-put open is recorded in an append-only contract-provenance
+sidecar with its exact OCC contract, quantity, broker order id, strategy, and leg role. This is
+the source of intent for a future close/roll gate; the broker remains the source of truth.
+
 ```mermaid
 flowchart TB
     GH["🚀 GitHub Action<br/>modal deploy"] --> APP

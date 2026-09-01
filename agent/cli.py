@@ -120,6 +120,13 @@ def main() -> int:
     reconcile_parser.add_argument("--ledger", required=True)
     reconcile_parser.add_argument("--decision-id", required=True)
 
+    provenance_parser = sub.add_parser("record-protective-put-open")
+    provenance_parser.add_argument("--ledger", required=True)
+    provenance_parser.add_argument("--decision-id", required=True)
+    provenance_parser.add_argument("--contract", required=True)
+    provenance_parser.add_argument("--quantity", required=True, type=int)
+    provenance_parser.add_argument("--broker-order-id", required=True)
+
     args = parser.parse_args()
     if args.command == "approve":
         row = record_human_approval(args.ledger, args.decision_id, approved_by=args.approved_by)
@@ -209,6 +216,14 @@ def main() -> int:
             raise ValueError(f"unreconcilable broker statuses: {sorted(states)}")
         row = record_broker_update(
             args.ledger, args.decision_id, state=next(iter(states)), broker_orders=observed
+        )
+        print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "record-protective-put-open":
+        from .contract_provenance import record_protective_put_open
+        row = record_protective_put_open(
+            args.ledger, decision_id=args.decision_id, contract=args.contract,
+            quantity=args.quantity, broker_order_id=args.broker_order_id,
         )
         print(json.dumps(row, sort_keys=True))
         return 0

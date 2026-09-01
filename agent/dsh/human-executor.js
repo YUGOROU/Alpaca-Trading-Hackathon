@@ -113,6 +113,15 @@ async function main() {
       'record-broker-update', '--ledger', ledger, '--decision-id', decisionId,
       '--state', 'accepted', '--broker-orders-json', JSON.stringify([{ alpaca_order_id: alpacaOrderId }]),
     ])
+    const [order] = prepared.orders
+    if (order.structure === 'protective_put' && order.intent === 'buy_to_open') {
+      const [contract] = placed[0].contracts
+      python([
+        'record-protective-put-open', '--ledger', ledger, '--decision-id', decisionId,
+        '--contract', contract, '--quantity', String(order.contracts),
+        '--broker-order-id', alpacaOrderId,
+      ])
+    }
     process.stdout.write(JSON.stringify({ decision_id: decisionId, broker_event: brokerEvent }) + '\n')
   } catch (error) {
     // The CLI validates order cardinality before writing submission_requested.
