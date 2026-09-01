@@ -6,7 +6,7 @@
 
 <sub>Team **Liquidity Leak** · Alpaca × lablab.ai Hackathon · *Options Alpha Agents*</sub>
 
-![tests](https://img.shields.io/badge/tests-118%20passing-2ea44f?style=for-the-badge)
+![tests](https://img.shields.io/badge/tests-120%20passing-2ea44f?style=for-the-badge)
 ![python](https://img.shields.io/badge/python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![node](https://img.shields.io/badge/runtime-DSH%20%C2%B7%20Node%2022-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![deploy](https://img.shields.io/badge/deploy-Modal%20always--on-7b3fe4?style=for-the-badge)
@@ -421,7 +421,7 @@ runtime/         Self-grading + the strategy API
 backtest/        Historical crash replay — hedged vs. unhedged equity curves
 deploy/          Modal always-on heartbeat + model-eval apps
 results/         Committed model-qualification evidence
-tests/           93 Python tests · agent/dsh/tests 25 Node tests
+tests/           95 Python tests · agent/dsh/tests 25 Node tests
 ```
 
 ---
@@ -455,7 +455,7 @@ python -m unittest discover -s tests        # 74 Python tests
 cd agent/dsh && npm test                    # 20 DSH / adapter tests
 ```
 
-**118 tests, zero external services required.** The deterministic core is exercised end-to-end
+**120 tests, zero external services required.** The deterministic core is exercised end-to-end
 — metrics, pricing, scoring, sizing, caps, the candidate gate, the model-native adapter, and
 the paper-placement path — all offline.
 
