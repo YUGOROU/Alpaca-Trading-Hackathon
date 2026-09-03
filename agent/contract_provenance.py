@@ -18,10 +18,22 @@ def provenance_path(ledger: str | Path) -> Path:
     return target.with_name(f"{target.stem}.contracts.jsonl")
 
 
+def is_spy_occ_put(contract: object) -> bool:
+    """Return true only for the exact OCC shape we record for autonomous hedges."""
+    return (
+        isinstance(contract, str)
+        and len(contract) == 18
+        and contract.startswith("SPY")
+        and contract[3:9].isdigit()
+        and contract[9] == "P"
+        and contract[10:].isdigit()
+    )
+
+
 def record_protective_put_open(
     ledger: str | Path, *, decision_id: str, contract: str, quantity: int, broker_order_id: str
 ) -> dict:
-    if len(contract) < 15 or contract[:-15] != "SPY" or contract[-9] != "P":
+    if not is_spy_occ_put(contract):
         raise ValueError("contract must be an SPY OCC put")
     if not isinstance(quantity, int) or quantity <= 0:
         raise ValueError("quantity must be a positive whole number")
@@ -58,4 +70,25 @@ def recorded_protective_puts(ledger: str | Path) -> list[dict]:
         return []
     return [
         json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    ]
+
+
+def recorded_protective_put_contracts(ledger: str | Path) -> list[dict]:
+    """Return only valid autonomous SPY hedge-open records for close matching.
+
+    This intentionally does not infer ownership from a similarly named broker
+    position.  The executor must still intersect this list with a fresh,
+    positive broker position immediately before placing a close.
+    """
+    return [
+        row for row in recorded_protective_puts(ledger)
+        if row.get("event") == "protective_put_opened"
+        and row.get("strategy") == "protective_put"
+        and row.get("leg_role") == "hedge_long_put"
+        and row.get("underlying") == "SPY"
+        and is_spy_occ_put(row.get("contract"))
+        and isinstance(row.get("quantity_opened"), int)
+        and row["quantity_opened"] > 0
+        and isinstance(row.get("broker_order_id"), str)
+        and bool(row["broker_order_id"])
     ]

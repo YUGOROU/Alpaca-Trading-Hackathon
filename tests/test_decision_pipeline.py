@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from contextlib import redirect_stdout
 from io import StringIO
@@ -89,6 +90,14 @@ class DecisionPipelineTests(unittest.TestCase):
         )
         self.assertNotEqual(autonomous.context_id, _scenario_context("stressed").context_id)
 
+    def test_autonomous_profile_targets_aggressive_coverage_without_a_daily_order_quota(self):
+        portfolio, market = get_scenario("stressed")
+        autonomous = build_decision_context(
+            portfolio, market, scenario_id="stressed", execution_mode="autonomous-paper",
+        )
+        partial = next(candidate for candidate in autonomous.candidates if candidate.candidate_id == "partial_hedge")
+        self.assertEqual(partial.plan.hedge.target_coverage, 0.75)
+
     def test_submit_cannot_relabel_a_human_context_as_autonomous(self):
         from agent.cli import main
         import sys
@@ -114,22 +123,25 @@ class DecisionPipelineTests(unittest.TestCase):
             self.assertEqual(row["execution"]["state"], "rejected")
             self.assertIn("execution_mode_mismatch", row["gate"]["reasons"])
 
-    def test_autonomous_income_candidate_is_one_spy_condor_order(self):
+    def test_autonomous_income_candidate_is_one_whitelisted_order(self):
         portfolio, market = get_scenario("calm")
         autonomous = build_decision_context(
             portfolio, market, scenario_id="calm", execution_mode="autonomous-paper",
         )
         income = next(candidate for candidate in autonomous.candidates if candidate.candidate_id == "harvest_income")
         self.assertEqual(len(income.plan.income.legs), 1)
-        self.assertEqual(income.plan.income.legs[0].kind, "iron_condor")
-        self.assertEqual(income.plan.income.legs[0].symbol, "SPY")
+        self.assertIn(income.plan.income.legs[0].kind, {"iron_condor", "covered_call"})
+        self.assertIn(income.plan.income.legs[0].symbol, {
+            "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLV", "SMH",
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AMD", "TSLA",
+        })
         gate = validate_decision(
             autonomous,
             AgentDecision(autonomous.context_id, "harvest_income", "Single bounded SPY overlay."),
         )
         self.assertTrue(gate.approved)
         self.assertEqual(len(gate.orders), 1)
-        self.assertEqual(gate.orders[0]["structure"], "iron_condor")
+        self.assertIn(gate.orders[0]["structure"], {"iron_condor", "covered_call"})
 
     def test_autonomous_income_prefers_one_covered_call_on_an_approved_held_name(self):
         _portfolio, market = get_scenario("calm")
@@ -150,6 +162,30 @@ class DecisionPipelineTests(unittest.TestCase):
         )
         self.assertEqual(len(gate.orders), 1)
         self.assertEqual((gate.orders[0]["structure"], gate.orders[0]["symbol"]), ("covered_call", "AAPL"))
+
+    def test_autonomous_whitelist_exposes_symbol_and_sizing_choices(self):
+        """The model may choose only pre-sized, fixed-universe option candidates."""
+        portfolio, market = get_scenario("calm")
+        qqq_market = replace(market, index_symbol="QQQ", index_price=500.0, index_ma50=490.0)
+        autonomous = build_decision_context(
+            portfolio, market, scenario_id="multi-underlying",
+            execution_mode="autonomous-paper", income_markets={"QQQ": qqq_market},
+        )
+        qqq = [c for c in autonomous.candidates if c.selection and c.selection["underlying"] == "QQQ"]
+        self.assertTrue(qqq)
+        qqq_condors = [c for c in qqq if c.selection["strategy"] == "iron_condor"]
+        self.assertTrue(qqq_condors)
+        self.assertTrue(all(c.selection["contracts"] > 0 for c in qqq))
+        self.assertTrue(all(c.selection["underlying"] in {
+            "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLV", "SMH",
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AMD", "TSLA",
+        } for c in autonomous.candidates if c.selection))
+        gate = validate_decision(
+            autonomous,
+            AgentDecision(autonomous.context_id, qqq_condors[-1].candidate_id, "Choose the QQQ standard allocation."),
+        )
+        self.assertTrue(gate.approved)
+        self.assertEqual((len(gate.orders), gate.orders[0]["symbol"]), (1, "QQQ"))
 
     def test_dry_run_ledger_is_idempotent_by_decision_id(self):
         ctx = context("elevated")
@@ -308,7 +344,7 @@ class DecisionPipelineTests(unittest.TestCase):
             saved = sys.argv
             try:
                 sys.argv = ["agent.cli", "prepare-submission", "--ledger", str(path), "--decision-id", "auto-close", "--autonomous-options-overlay"]
-                with self.assertRaisesRegex(ValueError, "bounded opening orders"):
+                with self.assertRaisesRegex(ValueError, "recorded SPY protective-put contract"):
                     main()
             finally:
                 sys.argv = saved

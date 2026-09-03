@@ -7,6 +7,7 @@ defeats the live stale-context_id problem the fixtures never hit.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import json
 import os
 import tempfile
 import unittest
@@ -153,6 +154,30 @@ class LiveContextTest(unittest.TestCase):
         ]
         self.assertEqual(count_hedge_contracts(positions, "SPY"), 5)
         self.assertEqual(count_hedge_contracts([("SPY", 300, 560.0)], "SPY"), 0)
+
+    def test_option_market_failures_are_persisted_as_safe_symbol_codes(self) -> None:
+        from feed import MockDataSource, StateStore
+        from agent.live_context import build_live_context, load_context_inputs
+
+        class FailingOptionSource(MockDataSource):
+            def daily_closes(self, symbol: str, lookback: int) -> list[float]:
+                if symbol == "MSFT":
+                    raise RuntimeError("provider response must not be persisted")
+                if symbol == "NVDA":
+                    return []
+                return super().daily_closes(symbol, lookback)
+
+        context = build_live_context(
+            source=FailingOptionSource(), state=StateStore(os.environ["AGENT_STATE_PATH"]),
+            execution_mode="autonomous-paper",
+        )
+        stored = load_context_inputs(context.context_id) or {}
+        observation = stored["option_market_observation"]
+        self.assertIn("SPY", observation["available_symbols"])
+        failures = {row["symbol"]: row["code"] for row in observation["unavailable_symbols"]}
+        self.assertEqual(failures["MSFT"], "source_error")
+        self.assertEqual(failures["NVDA"], "insufficient_history")
+        self.assertNotIn("provider response", json.dumps(observation))
 
 
 if __name__ == "__main__":

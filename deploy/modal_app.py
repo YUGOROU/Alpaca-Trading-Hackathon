@@ -12,6 +12,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import re
 from pathlib import Path
 
 import modal
@@ -23,13 +24,30 @@ MODEL_SECRET_NAME = "huggingface"
 ALPACA_PAPER_SECRET_NAME = "alpaca-paper"
 APPROVAL_SECRET_NAME = "human-approval-auth"
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_INSTRUCTION = "Protect the paper portfolio using only admissible candidates."
+DEFAULT_INSTRUCTION = (
+    "Use only the deterministic admissible candidates. Maximize risk-adjusted "
+    "executable paper-overlay activity: when one or more candidates contain an "
+    "executable order and remain within every deterministic risk limit, prefer the "
+    "best such candidate over hold. Use hold only when no executable admissible "
+    "candidate remains or execution would violate a deterministic limit."
+)
 # HF_MODEL_ID is configuration, not a credential. It is injected into the
 # server container as a plain (non-secret) environment variable so the
 # credentials Secret ("huggingface") keeps only HF_TOKEN. It may be overridden
 # at deploy time by setting HF_MODEL_ID in the calling environment.
 DEFAULT_MODEL_ID = "zai-org/GLM-5.3:baseten"
 MODEL_ID = os.environ.get("HF_MODEL_ID") or DEFAULT_MODEL_ID
+DEPLOY_GIT_SHA = os.environ.get("DEPLOY_GIT_SHA", "unknown")
+DEPLOY_TREE_STATE = os.environ.get("DEPLOY_TREE_STATE", "unknown")
+
+
+def deployment_provenance() -> dict[str, str]:
+    """Non-secret build identity required for every persistent deployment."""
+    if not re.fullmatch(r"[0-9a-f]{7,64}", DEPLOY_GIT_SHA):
+        raise RuntimeError("DEPLOY_GIT_SHA must be a 7-64 character lowercase Git SHA")
+    if DEPLOY_TREE_STATE not in {"clean", "dirty"}:
+        raise RuntimeError("DEPLOY_TREE_STATE must be clean or dirty")
+    return {"deploy_git_sha": DEPLOY_GIT_SHA, "deploy_tree_state": DEPLOY_TREE_STATE}
 
 image = (
     modal.Image.from_registry("node:22-bookworm", add_python="3.12")
@@ -85,7 +103,12 @@ approval_secret = modal.Secret.from_name(APPROVAL_SECRET_NAME, required_keys=["H
     secrets=[hf_token_secret, alpaca_paper_secret, approval_secret],
     # HF_MODEL_ID is injected as non-secret config (not part of the
     # credentials Secret). startup.sh and the heartbeat require it as an env var.
-    env={"HF_MODEL_ID": MODEL_ID, "PAPER_EXECUTION_MODE": "autonomous-options-overlay"},
+    env={
+        "HF_MODEL_ID": MODEL_ID,
+        "PAPER_EXECUTION_MODE": "autonomous-options-overlay",
+        "DEPLOY_GIT_SHA": DEPLOY_GIT_SHA,
+        "DEPLOY_TREE_STATE": DEPLOY_TREE_STATE,
+    },
 )
 class HeartbeatServer:
     """Always-on CPU container whose entrypoint owns the DSH heartbeat process."""
@@ -97,8 +120,9 @@ class HeartbeatServer:
         # the container environment that the heartbeat process inherits.
         # The deploy workflow supplies only paper-account credentials via the
         # dedicated Modal Secret; they are never read or logged by this code.
+        deployment_provenance()
         os.environ.setdefault("HEARTBEAT_INSTRUCTION", DEFAULT_INSTRUCTION)
-        os.environ.setdefault("HEARTBEAT_INTERVAL_MS", "1800000")
+        os.environ.setdefault("HEARTBEAT_INTERVAL_MS", "300000")
         Path("/data/state").mkdir(parents=True, exist_ok=True)
         self.process = __import__("subprocess").Popen(
             ["python", "/app/deploy/heartbeat_server.py"],
@@ -121,6 +145,30 @@ def inspect_state() -> dict[str, bool]:
         "profile_initialized": Path("/data/dsh/profiles/portfolio-agent").is_dir(),
         "heartbeat_lock_present": Path("/data/heartbeat.lock").exists(),
     }
+
+
+@app.function(
+    image=image,
+    volumes={"/data": state_volume},
+    secrets=[hf_token_secret, alpaca_paper_secret],
+    env={"HF_MODEL_ID": MODEL_ID},
+    timeout=180,
+)
+def heartbeat_smoke() -> dict[str, object]:
+    """Run one live observe→GLM→gate cycle with broker execution disabled."""
+    env = os.environ.copy()
+    env.update({
+        "AGENT_STATE_PATH": "/data/state/smoke-state.json",
+        "AGENT_CONTEXT_PATH": "/data/state/smoke-contexts.jsonl",
+        "AGENT_HEARTBEAT_PATH": "/data/state/smoke-heartbeat.json",
+        "AGENT_HEARTBEAT_RUN_KIND": "smoke",
+        "SMOKE_LEDGER_PATH": "/data/state/smoke-decisions.jsonl",
+    })
+    result = subprocess.run(
+        ["node", "/app/agent/dsh/heartbeat-smoke.js"], cwd="/app", env=env,
+        check=True, capture_output=True, text=True, timeout=150,
+    )
+    return json.loads(result.stdout)
 
 
 @app.function(image=image, cpu=1.0, memory=2048, timeout=90, secrets=[alpaca_paper_secret])

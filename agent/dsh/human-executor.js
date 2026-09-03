@@ -7,13 +7,12 @@
  * and a fresh Alpaca REST revalidation succeeds immediately before this process
  * opens the paper-only Alpaca MCP transport.  The initial operational slice
  * deliberately accepts exactly one gate order, so a heartbeat cannot
- * accidentally submit a portfolio-sized batch.
+ * accidentally submit a portfolio-sized batch. An autonomous close is further
+ * restricted to one provenance-recorded, currently held SPY protective put.
  */
 import { execFileSync } from 'node:child_process'
-import { connectAlpacaOrders, fetchOptionChain, placeGateOrders } from './alpaca-orders.js'
-
-const AUTONOMOUS_OPTIONS_STRUCTURES = new Set(['protective_put', 'covered_call', 'iron_condor'])
-const AUTONOMOUS_OPTIONS_SYMBOLS = new Set(['SPY', 'AAPL', 'MSFT', 'NVDA', 'DELL'])
+import { connectAlpacaOrders, fetchOptionChain, legSpecs, placeGateOrders } from './alpaca-orders.js'
+import { AUTONOMOUS_OPTIONS_STRUCTURES, AUTONOMOUS_OPTIONS_SYMBOLS } from './autonomous-policy.js'
 
 function usage() {
   process.stderr.write('usage: human-executor.js --ledger PATH --decision-id ID [--execution-mode human|autonomous-paper]\n')
@@ -42,11 +41,11 @@ function assertAutonomousOptionsOverlay(orders) {
   if (!AUTONOMOUS_OPTIONS_SYMBOLS.has(order.symbol)) {
     throw new Error('autonomous options execution permits only approved overlays')
   }
-  if (order.symbol !== 'SPY' && order.structure !== 'covered_call') {
-    throw new Error('single-name autonomous overlays permit covered calls only')
+  if (!['buy_to_open', 'sell_to_open', 'sell_to_close'].includes(order.intent)) {
+    throw new Error('autonomous options execution permits only bounded opening or protective-put close orders')
   }
-  if (!['buy_to_open', 'sell_to_open'].includes(order.intent)) {
-    throw new Error('autonomous options execution permits only bounded opening orders')
+  if (order.intent === 'sell_to_close' && (order.structure !== 'protective_put' || order.symbol !== 'SPY')) {
+    throw new Error('autonomous close orders are limited to recorded SPY protective puts')
   }
 }
 
@@ -97,18 +96,35 @@ async function main() {
     if (executionMode === 'autonomous-paper') assertAutonomousOptionsOverlay(prepared.orders)
     connection = await connectAlpacaOrders(process.env)
     const [order] = prepared.orders
-    const puts = await fetchOptionChain(connection.client, 'put', order.symbol)
-    const calls = await fetchOptionChain(connection.client, 'call', order.symbol)
+    const trackedContracts = order.intent === 'sell_to_close'
+      ? python(['recorded-protective-put-contracts', '--ledger', ledger]).contracts
+      : []
+    const specs = legSpecs(order)
+    const chains = await Promise.all([...new Set(specs.map(spec => spec.right))].map(async (right) => [
+      right,
+      await fetchOptionChain(
+        connection.client,
+        right === 'P' ? 'put' : 'call',
+        order.symbol,
+        { expiryDays: order.expiry_days, targetStrikes: specs.filter(spec => spec.right === right).map(spec => spec.strike) },
+      ),
+    ]))
+    const optionChain = Object.assign({}, ...chains.map(([, chain]) => chain))
     const results = await placeGateOrders(
       connection.client,
       prepared.orders,
-      { ...puts, ...calls },
+      optionChain,
       undefined,
-      { executablePrices: executionMode === 'autonomous-paper' },
+      { executablePrices: executionMode === 'autonomous-paper', trackedContracts },
     )
     const placed = results.filter(result => result.status === 'placed')
     if (placed.length !== 1 || results.length !== 1) {
-      throw new Error('MCP did not place exactly one approved order')
+      const reasons = results
+        .filter(result => result.status !== 'placed')
+        .map(result => String(result.reason || result.status))
+        .join('; ')
+        .slice(0, 400)
+      throw new Error(`MCP did not place exactly one approved order${reasons ? `: ${reasons}` : ''}`)
     }
     const alpacaOrderId = orderId(placed[0].result)
     if (!alpacaOrderId) {
@@ -124,7 +140,6 @@ async function main() {
       'record-broker-update', '--ledger', ledger, '--decision-id', decisionId,
       '--state', 'accepted', '--broker-orders-json', JSON.stringify([{ alpaca_order_id: alpacaOrderId }]),
     ])
-    const [order] = prepared.orders
     if (order.structure === 'protective_put' && order.intent === 'buy_to_open') {
       const [contract] = placed[0].contracts
       python([

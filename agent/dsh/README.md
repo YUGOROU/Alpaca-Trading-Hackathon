@@ -33,13 +33,14 @@ they never grant an order or account-mutation capability.
 broker submission permission. The deployed heartbeat may autonomously submit one
 gate-approved, paper-only overlay per eligible live cycle after separate policy
 authorization and fresh broker revalidation. It can open a SPY protective put, covered
-call, or iron condor, or a covered call on AAPL, MSFT, NVDA, or DELL when the live
+call, iron condor, defined-risk directional credit spread, or a covered call on a held whitelist symbol when the live
 snapshot has at least 100 held shares. It cannot trade equities, arbitrary symbols, batches, or close
 option structures; a future close/roll slice needs contract-level ledger provenance.
 For an autonomous write it resolves fresh bid/ask quotes, re-gates the price-derived hedge-cost
 or defined-risk cap, and uses a bounded limit/net-credit limit order; absent quotes or a breached
-cap fail closed. Autonomous income is one overlay: an eligible covered call on AAPL, MSFT, NVDA,
-or DELL (100 held shares required), otherwise a SPY iron-condor candidate; it never batches calls.
+cap fail closed. Autonomous income is one pre-sized overlay from the reviewed universe: SPY, QQQ,
+IWM, DIA, XLK, XLF, XLV, SMH, AAPL, MSFT, NVDA, AMZN, GOOGL, META, AMD, and TSLA. The agent
+chooses an admissible strategy and conservative/standard contract allocation; it never batches calls.
 `--place` remains rejected because execution is controlled
 only by the deployed `PAPER_EXECUTION_MODE=autonomous-options-overlay` policy.
 

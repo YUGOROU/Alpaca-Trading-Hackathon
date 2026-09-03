@@ -16,7 +16,7 @@ from pathlib import Path
 
 from dataclasses import replace
 
-from .candidates import build_decision_context
+from .candidates import AUTONOMOUS_OPTION_UNDERLYINGS, build_decision_context
 from .contracts import AgentDecision, GateResult, validate_execution_mode
 from .gate import validate_decision
 from .ledger import (
@@ -31,11 +31,12 @@ from .ledger import (
     record_submission_unknown,
     record_submission_requested,
 )
+from .contract_provenance import recorded_protective_put_contracts
 from .live_context import _live_source_and_state, build_live_context, build_mock_context, rebuild_live_context, rebuild_observed_context
 from .revalidation import revalidate_live_context
 from .scenarios import get_scenario
 
-AUTONOMOUS_OPTIONS_SYMBOLS = frozenset({"SPY", "AAPL", "MSFT", "NVDA", "DELL"})
+AUTONOMOUS_OPTIONS_SYMBOLS = frozenset(AUTONOMOUS_OPTION_UNDERLYINGS)
 
 def _add_mode(parser: argparse.ArgumentParser) -> None:
     group = parser.add_mutually_exclusive_group(required=True)
@@ -70,6 +71,14 @@ def main() -> int:
     context_parser = sub.add_parser("context")
     _add_mode(context_parser)
     context_parser.add_argument("--execution-mode", choices=("human", "autonomous-paper"), default="human")
+
+    monitor_parser = sub.add_parser("monitor")
+    _add_mode(monitor_parser)
+    monitor_parser.add_argument("--force-market", action="store_true", help=argparse.SUPPRESS)
+
+    heartbeat_event_parser = sub.add_parser("heartbeat-event")
+    heartbeat_event_parser.add_argument("--kind", required=True, choices=("tick_success", "tick_failure", "llm_attempt", "llm_success", "llm_failure"))
+    heartbeat_event_parser.add_argument("--failure-code")
 
     submit_parser = sub.add_parser("submit")
     _add_mode(submit_parser)
@@ -128,7 +137,20 @@ def main() -> int:
     provenance_parser.add_argument("--quantity", required=True, type=int)
     provenance_parser.add_argument("--broker-order-id", required=True)
 
+    recorded_contracts_parser = sub.add_parser("recorded-protective-put-contracts")
+    recorded_contracts_parser.add_argument("--ledger", required=True)
+
     args = parser.parse_args()
+    if args.command == "monitor":
+        if not args.live:
+            raise ValueError("heartbeat monitor requires --live")
+        from .heartbeat import evaluate_tick
+        print(json.dumps(evaluate_tick(force_market=args.force_market), sort_keys=True))
+        return 0
+    if args.command == "heartbeat-event":
+        from .heartbeat import record_event
+        print(json.dumps(record_event(args.kind, failure_code=args.failure_code), sort_keys=True))
+        return 0
     if args.command == "approve":
         row = record_human_approval(args.ledger, args.decision_id, approved_by=args.approved_by)
         print(json.dumps(row, sort_keys=True))
@@ -136,6 +158,9 @@ def main() -> int:
     if args.command == "authorize-autonomous":
         row = record_autonomous_authorization(args.ledger, args.decision_id)
         print(json.dumps(row, sort_keys=True))
+        return 0
+    if args.command == "recorded-protective-put-contracts":
+        print(json.dumps({"contracts": recorded_protective_put_contracts(args.ledger)}, sort_keys=True))
         return 0
     if args.command == "reject":
         row = record_human_rejection(args.ledger, args.decision_id, rejected_by=args.rejected_by)
@@ -149,20 +174,25 @@ def main() -> int:
         if args.require_exactly_one_order:
             if len(orders) != 1:
                 raise ValueError("the initial human executor requires exactly one gate order")
-            if orders[0].get("intent") == "sell_to_close":
+            if orders[0].get("intent") == "sell_to_close" and not args.autonomous_options_overlay:
                 raise ValueError("sell_to_close requires a recorded held OCC contract and is not yet executable")
         if args.autonomous_options_overlay:
             if len(orders) != 1:
                 raise ValueError("autonomous options execution requires exactly one gate order")
             order = orders[0]
-            if order.get("structure") not in {"protective_put", "covered_call", "iron_condor"}:
+            if order.get("structure") not in {
+                "protective_put", "covered_call", "iron_condor", "bull_put_spread", "bear_call_spread",
+            }:
                 raise ValueError("autonomous execution permits only known options-overlay structures")
             if order.get("symbol") not in AUTONOMOUS_OPTIONS_SYMBOLS:
                 raise ValueError("autonomous options execution permits only approved overlays")
-            if order.get("symbol") != "SPY" and order.get("structure") != "covered_call":
-                raise ValueError("single-name autonomous overlays permit covered calls only")
-            if order.get("intent") not in {"buy_to_open", "sell_to_open"}:
-                raise ValueError("autonomous options execution permits only bounded opening orders")
+            if order.get("intent") not in {"buy_to_open", "sell_to_open", "sell_to_close"}:
+                raise ValueError("autonomous options execution permits only bounded opening or protective-put close orders")
+            if order.get("intent") == "sell_to_close":
+                if order.get("structure") != "protective_put" or order.get("symbol") != "SPY":
+                    raise ValueError("autonomous close orders are limited to recorded SPY protective puts")
+                if not recorded_protective_put_contracts(args.ledger):
+                    raise ValueError("autonomous close requires a recorded SPY protective-put contract")
         source, _state = _live_source_and_state()
         # The canonical proposal supplies the only admissible context/order set.
         context_id = proposal_context_id(args.ledger, args.decision_id)

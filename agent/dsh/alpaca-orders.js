@@ -1,16 +1,21 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { ALPACA_MCP_VERSION, decodeMcpResult } from './alpaca-readonly.js'
+import { ALPACA_MCP_VERSION, FASTMCP_VERSION, decodeMcpResult } from './alpaca-readonly.js'
 
 // Order-capable connection to the SAME official server, still paper-enforced. Kept
 // separate from the read-only wrapper so the write surface is opt-in and auditable.
 const ORDER_TOOLSET = 'account,trading,options-data'
 const PLACE_TOOL = 'place_option_order'
+// This response is consumed only by the deterministic executor, never exposed
+// to the model.  A 250-contract chain can exceed the model-tool 100KB limit.
+const ORDER_CHAIN_MAX_RESULT_CHARS = 500_000
 
 // Structures we can resolve to concrete listed contracts and place. Single-leg
 // (protective_put buy, covered_call sell) go as a plain option order; the iron_condor
 // goes as a 4-leg mleg order. Anything else is skipped rather than mis-traded.
-const PLACEABLE_STRUCTURES = new Set(['protective_put', 'covered_call', 'iron_condor'])
+const PLACEABLE_STRUCTURES = new Set([
+  'protective_put', 'covered_call', 'iron_condor', 'bull_put_spread', 'bear_call_spread',
+])
 
 function orderChildEnv(env) {
   const key = env.ALPACA_API_KEY
@@ -32,7 +37,10 @@ function orderChildEnv(env) {
 export async function connectAlpacaOrders(env = process.env) {
   const transport = new StdioClientTransport({
     command: 'uvx',
-    args: [`--from=alpaca-mcp-server==${ALPACA_MCP_VERSION}`, 'alpaca-mcp-server'],
+    args: [
+      '--with', `fastmcp==${FASTMCP_VERSION}`,
+      `--from=alpaca-mcp-server==${ALPACA_MCP_VERSION}`, 'alpaca-mcp-server',
+    ],
     env: orderChildEnv(env),
     stderr: 'pipe',
   })
@@ -48,6 +56,61 @@ function pad(n, width) {
 function parseOccExpiry(occ) {
   const ymd = occ.slice(-15, -9)
   return new Date(Date.UTC(2000 + Number(ymd.slice(0, 2)), Number(ymd.slice(2, 4)) - 1, Number(ymd.slice(4, 6))))
+}
+
+function positionRows(value) {
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.positions)) return value.positions
+  if (Array.isArray(value?.data)) return value.data
+  return []
+}
+
+function trackedProtectivePutSymbols(records) {
+  const symbols = new Set()
+  for (const record of Array.isArray(records) ? records : []) {
+    const symbol = String(record?.contract ?? '')
+    if (
+      record?.event === 'protective_put_opened'
+      && record?.strategy === 'protective_put'
+      && record?.leg_role === 'hedge_long_put'
+      && record?.underlying === 'SPY'
+      && /^SPY\d{6}P\d{8}$/.test(symbol)
+      && Number.isInteger(record?.quantity_opened) && record.quantity_opened > 0
+      && typeof record?.broker_order_id === 'string' && record.broker_order_id
+    ) symbols.add(symbol)
+  }
+  return symbols
+}
+
+// Resolve an abstract hedge reduction only from the intersection of fresh,
+// positive broker positions and the append-only autonomous hedge provenance.
+// One gate order must remain one broker order. When the gate asks to reduce
+// across several contracts, this selects one deterministic contract and caps
+// this cycle's close to its held quantity rather than fanning out orders.
+export function resolveHeldTrackedProtectivePut(positions, trackedContracts, order, now = new Date()) {
+  const requested = Number(order.contracts)
+  if (!Number.isInteger(requested) || requested <= 0) {
+    throw new Error('close order requires a positive whole contract quantity')
+  }
+  const tracked = trackedProtectivePutSymbols(trackedContracts)
+  let best = null
+  for (const row of positionRows(positions)) {
+    const symbol = String(row?.symbol ?? row?.asset_symbol ?? '')
+    const qty = Number(row?.qty ?? row?.quantity ?? 0)
+    if (!Number.isInteger(qty) || qty <= 0 || !tracked.has(symbol)) continue
+    let expiry
+    try { expiry = parseOccExpiry(symbol) } catch { continue }
+    const days = Math.round((expiry - now) / 86_400_000)
+    if (days <= 0) continue
+    const strike = Number(symbol.slice(-8)) / 1000
+    if (!Number.isFinite(strike)) continue
+    const score = [Math.abs(days - Number(order.expiry_days)), Math.abs(strike - Number(order.strike)), symbol]
+    if (best === null || score[0] < best.score[0] || (score[0] === best.score[0] && (score[1] < best.score[1] || (score[1] === best.score[1] && score[2] < best.score[2])))) {
+      best = { symbol, strike, expiry, score, contracts: Math.min(requested, qty) }
+    }
+  }
+  if (best === null) throw new Error('no positive held provenance-recorded SPY protective put can satisfy the close order')
+  return best
 }
 
 // Build an OCC symbol: ROOT + YYMMDD + C/P + strike*1000 (8 digits). e.g. SPY240920P00520000
@@ -109,6 +172,18 @@ export function legSpecs(order) {
       { right: 'P', strike: order.long_strike, action: 'buy' },        // long put   (protection)
       { right: 'C', strike: order.call_short_strike, action: 'sell' }, // short call (credit)
       { right: 'C', strike: order.call_long_strike, action: 'buy' },   // long call  (protection)
+    ]
+  }
+  if (order.structure === 'bull_put_spread') {
+    return [
+      { right: 'P', strike: order.short_strike, action: 'sell' },
+      { right: 'P', strike: order.long_strike, action: 'buy' },
+    ]
+  }
+  if (order.structure === 'bear_call_spread') {
+    return [
+      { right: 'C', strike: order.short_strike, action: 'sell' },
+      { right: 'C', strike: order.long_strike, action: 'buy' },
     ]
   }
   throw new Error(`unsupported structure: ${order.structure}`)
@@ -195,21 +270,25 @@ export function executableOrderPrice(order, resolvedLegs) {
   const netDebit = legPrices.reduce(
     (total, leg) => total + (leg.action === 'buy' ? leg.price : -leg.price), 0,
   )
-  if (order.structure === 'iron_condor') {
+  if (['iron_condor', 'bull_put_spread', 'bear_call_spread'].includes(order.structure)) {
     const putShort = legPrices.find((leg) => leg.right === 'P' && leg.action === 'sell')
     const putLong = legPrices.find((leg) => leg.right === 'P' && leg.action === 'buy')
     const callShort = legPrices.find((leg) => leg.right === 'C' && leg.action === 'sell')
     const callLong = legPrices.find((leg) => leg.right === 'C' && leg.action === 'buy')
     // Contract resolution can snap the model's target to a listed strike. Risk
     // must use those actual strikes, never the pre-resolution target values.
-    const width = Math.max(
-      Number(putShort?.strike) - Number(putLong?.strike),
-      Number(callLong?.strike) - Number(callShort?.strike),
-    )
+    const width = order.structure === 'bull_put_spread'
+      ? Number(putShort?.strike) - Number(putLong?.strike)
+      : order.structure === 'bear_call_spread'
+        ? Number(callLong?.strike) - Number(callShort?.strike)
+        : Math.max(
+          Number(putShort?.strike) - Number(putLong?.strike),
+          Number(callLong?.strike) - Number(callShort?.strike),
+        )
     const totalLoss = (width + netDebit) * 100 * order.contracts
     const cap = Number(order.max_total_loss)
     if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(cap) || cap < 0 || totalLoss < 0 || totalLoss > cap + 1e-9) {
-      throw new Error('executable iron-condor loss exceeds deterministic cap')
+      throw new Error(`executable ${order.structure} loss exceeds deterministic cap`)
     }
   }
   return { limitPrice: priceString(netDebit), netDebit }
@@ -217,16 +296,46 @@ export function executableOrderPrice(order, resolvedLegs) {
 
 // Fetch a fresh P or C chain for the gate-approved underlying through the order client.
 // Placement resolves its own contracts rather than the read-only snapshot's puts-only view.
-export async function fetchOptionChain(client, type, underlyingSymbol = 'SPY') {
+export async function fetchOptionChain(client, type, underlyingSymbol = 'SPY', {
+  expiryDays = 0,
+  targetStrikes = [],
+  now = new Date(),
+} = {}) {
+  const strikes = targetStrikes.map(Number).filter(Number.isFinite)
+  const expiryFloor = new Date(now.getTime() + Math.max(0, expiryDays) * 86_400_000)
   const raw = await client.callTool({
     name: 'get_option_chain',
-    arguments: { underlying_symbol: underlyingSymbol, feed: 'indicative', limit: 250, type },
+    arguments: {
+      underlying_symbol: underlyingSymbol,
+      feed: 'indicative',
+      type,
+      // Calendar-day targets can fall on weekends or exchange holidays. The
+      // resolver therefore chooses the nearest listed expiry on or after it.
+      ...(expiryDays > 0 ? { expiration_date_gte: expiryFloor.toISOString().slice(0, 10) } : {}),
+      ...(strikes.length ? {
+        strike_price_gte: Math.min(...strikes) - 10,
+        strike_price_lte: Math.max(...strikes) + 10,
+      } : {}),
+      limit: 250,
+    },
   })
-  return decodeMcpResult(raw) || {}
+  // The Alpaca API's OptionChain body is `{ snapshots: { OCC: snapshot } }`.
+  // alpaca-mcp-server 2.2.1 wraps that body in its trust-boundary envelope as
+  // `{ _alpaca_mcp_security, data: { snapshots: ... } }`. Contract resolution
+  // must operate on the OCC-keyed map, never either envelope. Walking an
+  // envelope made every valid chain look like non-OCC keys and therefore fail
+  // closed as "no listed contract".
+  const decoded = decodeMcpResult(raw, { maxResultChars: ORDER_CHAIN_MAX_RESULT_CHARS }) || {}
+  const snapshots = decoded?.data?.snapshots ?? decoded?.snapshots
+  return snapshots && typeof snapshots === 'object' ? snapshots : {}
+}
+
+export async function fetchOptionPositions(client) {
+  return decodeMcpResult(await client.callTool({ name: 'get_all_positions', arguments: {} })) || []
 }
 
 export async function placeGateOrders(
-  client, gateOrders, optionChain, io = { stderr: process.stderr }, { executablePrices = false } = {},
+  client, gateOrders, optionChain, io = { stderr: process.stderr }, { executablePrices = false, trackedContracts = [] } = {},
 ) {
   const results = []
   for (const order of gateOrders) {
@@ -237,18 +346,24 @@ export async function placeGateOrders(
     }
     try {
       // Resolve every leg first — a partially-resolved structure is never sent (fail-closed).
-      const resolved = legSpecs(order).map((leg) => {
-        const contract = resolveContract(optionChain, leg.right, leg.strike, order.expiry_days)
-        return { ...contract, right: leg.right, action: leg.action, snapshot: optionChain[contract.symbol] }
-      })
-      const executable = executablePrices ? executableOrderPrice(order, resolved) : null
+      const closeContract = order.intent === 'sell_to_close'
+        ? resolveHeldTrackedProtectivePut(await fetchOptionPositions(client), trackedContracts, order)
+        : null
+      const executionOrder = closeContract ? { ...order, contracts: closeContract.contracts } : order
+      const resolved = closeContract
+        ? [{ ...closeContract, right: 'P', action: 'sell', snapshot: optionChain[closeContract.symbol] }]
+        : legSpecs(order).map((leg) => {
+          const contract = resolveContract(optionChain, leg.right, leg.strike, order.expiry_days)
+          return { ...contract, right: leg.right, action: leg.action, snapshot: optionChain[contract.symbol] }
+        })
+      const executable = executablePrices ? executableOrderPrice(executionOrder, resolved) : null
       const args = resolved.length === 1
-        ? buildPlaceArgs(resolved[0], order, executable)
-        : buildMlegArgs(order, resolved, executable)
+        ? buildPlaceArgs(resolved[0], executionOrder, executable)
+        : buildMlegArgs(executionOrder, resolved, executable)
       const raw = await client.callTool({ name: PLACE_TOOL, arguments: args })
       const symbols = resolved.map((r) => r.symbol)
-      results.push({ order, status: 'placed', contracts: symbols, result: decodeMcpResult(raw) })
-      io.stderr.write(`orders: placed ${order.structure} x${order.contracts} [${symbols.join(', ')}]\n`)
+      results.push({ order: executionOrder, status: 'placed', contracts: symbols, result: decodeMcpResult(raw) })
+      io.stderr.write(`orders: placed ${order.structure} x${executionOrder.contracts} [${symbols.join(', ')}]\n`)
     } catch (error) {
       results.push({ order, status: 'failed', reason: error instanceof Error ? error.message : String(error) })
       io.stderr.write(`orders: FAILED to place ${order.structure}: ${error}\n`)

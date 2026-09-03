@@ -247,7 +247,7 @@ export async function runModelNativeDecision(config, {
   try { value = await submit(config, phaseTwo.call.arguments) } catch {
     return { status: 'failed', failure: 'tool_dispatch_error', metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }
   }
-  if (config.executionMode === 'autonomous-paper' && value?.gate?.status === 'approved_for_dry_run') {
+  if (config.executionMode === 'autonomous-paper' && config.allowExecution !== false && value?.gate?.status === 'approved_for_dry_run') {
     const orders = value?.gate?.orders
     if (!Array.isArray(orders) || orders.length === 0) {
       return { status: 'completed', value, metadata: phaseTwo.metadata, protocol: [phaseOne.metadata, phaseTwo.metadata] }

@@ -19,6 +19,8 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
       HF_MODEL_ID: ${{ inputs.hf_model_id }}
+      DEPLOY_GIT_SHA: ${{ github.sha }}
+      DEPLOY_TREE_STATE: clean
       ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
       ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       HUMAN_APPROVAL_TOKEN: ${{ secrets.HUMAN_APPROVAL_TOKEN }}

@@ -45,9 +45,16 @@ test('buildPlaceArgs omits client_order_id when absent', () => {
 
 test('fetchOptionChain uses the gate-approved underlying', async () => {
   const calls = []
-  const client = { async callTool(req) { calls.push(req); return { structuredContent: {} } } }
-  await fetchOptionChain(client, 'call', 'NVDA')
+  const snapshots = { NVDA240920C00120000: { latestQuote: { ap: 2.5 } } }
+  const client = {
+    async callTool(req) {
+      calls.push(req)
+      return { structuredContent: { _alpaca_mcp_security: {}, data: { snapshots } } }
+    },
+  }
+  const chain = await fetchOptionChain(client, 'call', 'NVDA')
   assert.equal(calls[0].arguments.underlying_symbol, 'NVDA')
+  assert.deepEqual(chain, snapshots)
 })
 
 test('autonomous hedge prices at the current ask and rejects a cost-cap breach', () => {

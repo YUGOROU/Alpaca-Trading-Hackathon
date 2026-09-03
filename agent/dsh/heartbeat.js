@@ -4,6 +4,7 @@ import { installModelSelection } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { runModelNativeDecision } from './model-native-adapter.js'
+import { monitorHeartbeat, recordHeartbeatEvent } from './decision-bridge.js'
 
 export const name = 'portfolio-heartbeat'
 export const inject = ['agentDefaultModel', 'agents', 'sessions']
@@ -17,21 +18,10 @@ export const Config = Schema.object({
   pythonExecutable: Schema.string().default('python3'),
   heartbeat: Schema.boolean().default(false), // only loop when heartbeat mode is selected
   instruction: Schema.string().required(),
-  intervalMs: Schema.number().default(1_800_000), // 30 min — matches the retired cron cadence
-  marketHoursOnly: Schema.boolean().default(true),
+  intervalMs: Schema.number().default(300_000),
   maxCycles: Schema.number().default(0), // 0 = run until stopped
   executionMode: Schema.string().default('human'),
 })
-
-const RTH_START_UTC = 13 // ~09:30 ET, widened to cover DST like the old cron (13-21 UTC)
-const RTH_END_UTC = 21
-
-export function isMarketOpen(now = new Date()) {
-  const day = now.getUTCDay() // 0 Sun .. 6 Sat
-  if (day === 0 || day === 6) return false
-  const hour = now.getUTCHours()
-  return hour >= RTH_START_UTC && hour < RTH_END_UTC
-}
 
 function cancellableSleep(ms) {
   let cancel
@@ -81,21 +71,28 @@ async function loop(ctx, config, io, isStopped) {
   await ctx.get('loader')?.await()
   let cycles = 0
   while (!isStopped()) {
-    if (!config.marketHoursOnly || isMarketOpen()) {
-      try {
-        const reason = await runOneCycle(ctx, config)
-        cycles += 1
+    try {
+      const tick = await monitorHeartbeat(config)
+      cycles += 1
+      await recordHeartbeatEvent(config, { kind: 'tick_success' })
+      if (!tick.llm_due) {
+        io.stderr.write(`heartbeat: ${JSON.stringify({ event: 'tick', cycle: cycles, phase: tick.phase, llm_due: false, reasons: tick.reasons || [], option_market_observation: tick.option_market_observation || {}, outcome: 'success' })}\n`)
+      } else {
+        await recordHeartbeatEvent(config, { kind: 'llm_attempt' })
+        const reason = await runOneCycle(ctx, { ...config, preparedContext: tick.context })
         if (reason?.kind === 'error') {
-          io.stderr.write(`heartbeat: cycle ${cycles} error: ${reason.error.code}: ${reason.error.message}\n`)
+          await recordHeartbeatEvent(config, { kind: 'llm_failure', failureCode: reason.error.code })
+          io.stderr.write(`heartbeat: ${JSON.stringify({ event: 'tick', cycle: cycles, phase: tick.phase, llm_due: true, reasons: tick.reasons || [], option_market_observation: tick.option_market_observation || {}, outcome: 'llm_failure', failure_code: reason.error.code })}\n`)
         } else {
-          io.stderr.write(`heartbeat: cycle ${cycles} ${reason?.kind ?? 'done'}\n`)
+          await recordHeartbeatEvent(config, { kind: 'llm_success' })
+          io.stderr.write(`heartbeat: ${JSON.stringify({ event: 'tick', cycle: cycles, phase: tick.phase, llm_due: true, reasons: tick.reasons || [], option_market_observation: tick.option_market_observation || {}, outcome: 'llm_success' })}\n`)
         }
-      } catch (error) {
-        io.stderr.write(`heartbeat: cycle failed: ${error instanceof Error ? error.message : String(error)}\n`)
       }
       if (config.maxCycles > 0 && cycles >= config.maxCycles) break
-    } else {
-      io.stderr.write('heartbeat: market closed, skipping tick\n')
+    } catch (error) {
+      const failureCode = error instanceof Error ? error.message.slice(0, 80) : 'unknown_tick_failure'
+      try { await recordHeartbeatEvent(config, { kind: 'tick_failure', failureCode }) } catch { /* preserve loop even if telemetry storage is unavailable */ }
+      io.stderr.write(`heartbeat: ${JSON.stringify({ event: 'tick', cycle: cycles, outcome: 'tick_failure', failure_code: failureCode })}\n`)
     }
     if (isStopped()) break
     const sleep = cancellableSleep(config.intervalMs)

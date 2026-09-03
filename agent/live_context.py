@@ -23,8 +23,9 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from risk_engine import MarketData, Portfolio, Position
+from feed.core import assemble_market_data
 
-from .candidates import build_decision_context
+from .candidates import AUTONOMOUS_OPTION_UNDERLYINGS, build_decision_context
 from .contracts import DecisionContext
 
 LIVE_SCENARIO_ID = "live"
@@ -139,6 +140,72 @@ def _market_from_dict(d: dict) -> MarketData:
     return MarketData(**d)
 
 
+def _income_markets_to_dict(markets: dict[str, MarketData]) -> dict[str, dict]:
+    return {symbol: _market_to_dict(market) for symbol, market in markets.items()}
+
+
+def _income_markets_from_dict(raw: dict | None) -> dict[str, MarketData]:
+    if not isinstance(raw, dict):
+        return {}
+    return {
+        str(symbol): _market_from_dict(value)
+        for symbol, value in raw.items()
+        if isinstance(value, dict)
+    }
+
+
+def observe_option_markets(
+    source,
+    *,
+    fallback: MarketData,
+    lookback: int = 60,
+    telemetry: dict | None = None,
+) -> dict[str, MarketData]:
+    """Observe current data for the fixed option whitelist, independently.
+
+    A missing chain or quote for one name only removes that name from this cycle;
+    it never substitutes SPY values for another underlying.  The baseline SPY
+    market has already been obtained by ``observe`` and is always retained.
+    """
+    markets = {fallback.index_symbol: fallback}
+    # This is deliberately a small, secret-free operational record.  Do not
+    # retain exception messages: provider responses can contain request details
+    # and are neither needed nor safe for heartbeat telemetry.
+    observation = {
+        "available_symbols": [fallback.index_symbol],
+        "unavailable_symbols": [],
+    }
+    for symbol in AUTONOMOUS_OPTION_UNDERLYINGS:
+        if symbol == fallback.index_symbol:
+            continue
+        try:
+            closes = source.daily_closes(symbol, max(lookback, 51))
+            if len(closes) < 51:
+                observation["unavailable_symbols"].append({"symbol": symbol, "code": "insufficient_history"})
+                continue
+            spot = source.latest_price(symbol)
+            iv = source.atm_iv(symbol, 4)
+            if spot <= 0.0 or iv <= 0.0:
+                observation["unavailable_symbols"].append({"symbol": symbol, "code": "invalid_quote_or_iv"})
+                continue
+            # Per-symbol annual IV history is not guaranteed by the paper data
+            # entitlement.  This bounded local band is only for the descriptive
+            # IV-rank field; admissibility uses current IV vs realised vol.
+            markets[symbol] = assemble_market_data(
+                symbol, closes, spot, iv, (iv * 0.75, iv * 1.25),
+                returns_lookback=lookback,
+            )
+            observation["available_symbols"].append(symbol)
+        except Exception:
+            observation["unavailable_symbols"].append({"symbol": symbol, "code": "source_error"})
+            continue
+    observation["available_symbols"].sort()
+    observation["unavailable_symbols"].sort(key=lambda value: value["symbol"])
+    if telemetry is not None:
+        telemetry.update(observation)
+    return markets
+
+
 # ---------------------------------------------------------------------------
 # The inputs store — one JSONL line per built live context, keyed by id.
 # ---------------------------------------------------------------------------
@@ -160,6 +227,8 @@ def save_context_inputs(
     execution_snapshot: dict | None = None,
     scenario_id: str = LIVE_SCENARIO_ID,
     execution_mode: str = "human",
+    income_markets: dict[str, MarketData] | None = None,
+    option_market_observation: dict | None = None,
     keep: int = DEFAULT_STORE_KEEP,
 ) -> None:
     """Append the inputs that produced `context_id`; keep only the last `keep`."""
@@ -179,6 +248,8 @@ def save_context_inputs(
         "input_provenance": input_provenance,
         "execution_snapshot": execution_snapshot,
         "execution_mode": execution_mode,
+        "income_markets": _income_markets_to_dict(income_markets or {}),
+        "option_market_observation": option_market_observation or {},
     })
     rows = rows[-keep:]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -257,6 +328,11 @@ def build_live_context(
         current_contracts = count_hedge_contracts(live_positions, index_symbol)
     income_open = has_open_income(live_positions)
     portfolio, market = observe(snapshot_source, state, index_symbol=index_symbol)
+    option_market_observation: dict = {}
+    income_markets = (
+        observe_option_markets(source, fallback=market, telemetry=option_market_observation)
+        if execution_mode == "autonomous-paper" else {}
+    )
     broker_equity, _broker_cash = broker_account
     open_order_ids = None
     if hasattr(source, "open_order_ids"):
@@ -275,6 +351,7 @@ def build_live_context(
         expiry_days=expiry_days,
         input_provenance=provenance,
         execution_mode=execution_mode,
+        income_markets=income_markets,
     )
     if persist:
         save_context_inputs(
@@ -285,6 +362,8 @@ def build_live_context(
             execution_snapshot=execution_snapshot,
             scenario_id=scenario_id,
             execution_mode=execution_mode,
+            income_markets=income_markets,
+            option_market_observation=option_market_observation,
         )
     return context
 
@@ -315,6 +394,7 @@ def rebuild_observed_context(
         expiry_days=row["expiry_days"],
         input_provenance=provenance,
         execution_mode=row.get("execution_mode", "human"),
+        income_markets=_income_markets_from_dict(row.get("income_markets")),
     )
 
 

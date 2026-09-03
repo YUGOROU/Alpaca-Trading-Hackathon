@@ -2,6 +2,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 export const ALPACA_MCP_VERSION = '2.2.1'
+// alpaca-mcp-server 2.2.1 declares only ``fastmcp>=3.1.0``.  FastMCP 4 removed
+// the ToolResult import used by that release, so leave resolution deterministic
+// instead of letting a fresh deploy crash before its MCP handshake.
+export const FASTMCP_VERSION = '3.1.0'
 
 export const READONLY_TOOLS = Object.freeze([
   'get_account_info',
@@ -50,7 +54,10 @@ function childEnvironment(env) {
 export async function connectAlpacaMcp(env = process.env) {
   const transport = new StdioClientTransport({
     command: 'uvx',
-    args: [`--from=alpaca-mcp-server==${ALPACA_MCP_VERSION}`, 'alpaca-mcp-server'],
+    args: [
+      '--with', `fastmcp==${FASTMCP_VERSION}`,
+      `--from=alpaca-mcp-server==${ALPACA_MCP_VERSION}`, 'alpaca-mcp-server',
+    ],
     env: childEnvironment(env),
     stderr: 'pipe',
   })
@@ -59,12 +66,12 @@ export async function connectAlpacaMcp(env = process.env) {
   return { client, close: () => client.close() }
 }
 
-export function decodeMcpResult(result) {
+export function decodeMcpResult(result, { maxResultChars = MAX_RESULT_CHARS } = {}) {
   if (result?.isError === true) throw new Error('Alpaca MCP returned an error result')
   if (result?.structuredContent !== undefined) {
     const encoded = JSON.stringify(result.structuredContent)
-    if (encoded.length > MAX_RESULT_CHARS) {
-      throw new Error(`Alpaca MCP result exceeded ${MAX_RESULT_CHARS} characters`)
+    if (encoded.length > maxResultChars) {
+      throw new Error(`Alpaca MCP result exceeded ${maxResultChars} characters`)
     }
     return result.structuredContent
   }
@@ -72,8 +79,8 @@ export function decodeMcpResult(result) {
     .filter(block => block.type === 'text')
     .map(block => block.text)
     .join('\n')
-  if (text.length > MAX_RESULT_CHARS) {
-    throw new Error(`Alpaca MCP result exceeded ${MAX_RESULT_CHARS} characters`)
+  if (text.length > maxResultChars) {
+    throw new Error(`Alpaca MCP result exceeded ${maxResultChars} characters`)
   }
   if (text === '') return null
   try {

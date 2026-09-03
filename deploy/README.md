@@ -23,7 +23,7 @@ has passed the repository's replay evaluation and the evaluated model id
 server environment. The validated model id can be overridden at deploy time by
 setting `HF_MODEL_ID` in the calling environment. It deploys a one-CPU Modal Server
 with `min_containers=1`; its server process owns the heartbeat continuously and
-exposes public liveness at `/healthz`, operational state at `/statusz`, and a
+exposes liveness plus scheduler readiness at `/healthz`, operational state at `/statusz`, and a
 public read-only monitor at `/` (English by default) and `/ja` (Japanese). The monitor is a sanitized aggregate of the
 decision ledger: it highlights decision cycles, gate outcomes, policy stops,
 autonomous overlay submissions, and a fixed-label activity log. It never
@@ -34,10 +34,30 @@ stops the prior deployment before the new server starts. `/data/heartbeat.lock`
 on the `liquidity-leak-dsh-state` Volume is a second safeguard against duplicate
 owners.
 
+`/statusz` separates `process_alive`, `input_ready`, and `tick_fresh`. During a
+regular session a tick older than three five-minute intervals makes the endpoint
+return `503`, even if the Node process remains alive. Startup also waits for the
+first Python tick and refuses a persisted DSH profile unless the
+`alpaca-portfolio-dsh` dependency and bundle are both present; an incomplete
+base-only Volume profile is repaired before DSH starts.
+
+Every persistent deployment also requires non-secret `DEPLOY_GIT_SHA` and
+`DEPLOY_TREE_STATE` (`clean` or `dirty`); `/statusz` returns them so operations
+can distinguish the running image from local source. The GitHub Actions path
+sets these values from the checked-out commit. Manual deploys must provide both.
+Operational status additionally reports sanitized scheduler telemetry: the last
+successful tick, LLM attempt/success/failure timestamps, and independent
+consecutive tick/LLM failure counters. Smoke uses separate state, context, and
+ledger files, so it cannot make the persistent heartbeat look fresh or add
+public monitor activity.
+
 The persisted DSH profile, sessions, contexts, and ledger survive container
-replacement on the Volume. The deployed heartbeat is armed only for one `SPY`
-options-overlay order per eligible live cycle: a SPY protective put, covered call, or
-iron condor, or a covered call on AAPL, MSFT, NVDA, or DELL when at least 100 shares are held.
+replacement on the Volume. The deployed heartbeat is armed for only one reviewed
+options-overlay order per eligible live cycle: a protective put, covered call, or
+iron condor, a defined-risk bullish put spread, a defined-risk bearish call spread, or a covered
+call on a held whitelist symbol (100 shares required). The reviewed
+option universe is SPY, QQQ, IWM, DIA, XLK, XLF, XLV, SMH, AAPL, MSFT, NVDA, AMZN, GOOGL,
+META, AMD, and TSLA.
 It cannot place an equity/core-book order, a multi-order batch, or
 close option structures autonomously. Contract-level ledger provenance is required
 before a future autonomous close/roll slice can distinguish protective puts from
@@ -45,8 +65,9 @@ income-spread legs. Before every write it records autonomous-policy provenance,
 revalidates the fresh live snapshot, and keeps the broker client order ID for
 reconciliation. It resolves fresh executable bid/ask quotes, re-gates the hedge-cost or defined-
 risk cap, and submits only a bounded limit/net-credit limit order; missing quotes or a breached
-cap fail closed. Autonomous income is a single overlay: an eligible named covered call, otherwise
-a SPY iron condor. The authenticated UI remains available for human-mode proposals.
+cap fail closed. Autonomous income is one pre-sized overlay selected by the agent from the
+reviewed universe (including conservative and standard contract allocations); it never submits a batch.
+The authenticated UI remains available for human-mode proposals.
 
 After deployment, run the non-mutating paper-read probe before approving any
 proposal:
@@ -71,3 +92,12 @@ It evaluates calm, elevated, and stressed fixture scenarios. A candidate is
 eligible only when every run exits cleanly and creates one
 `approved_for_dry_run` ledger entry. This PR does not fine-tune a model, run RL,
 or run GEPA; it creates the repeatable baseline those experiments would need.
+## Heartbeat cadence
+
+The server wakes every five minutes. Python observes the paper account, market,
+and admissible candidates on every regular-session tick; it starts GLM only for
+an initial/eventful snapshot or the 15-minute backstop. Each model turn receives
+only that fresh structured context, never conversation history. Pre-open and
+post-close each run one Python-only reconciliation per New York trading day;
+20:00–04:00 ET and weekends are sleep windows. Options remain regular-session
+only, so those reconciliation phases cannot submit an option order.
