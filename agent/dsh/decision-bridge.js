@@ -34,7 +34,20 @@ async function bridge(config, args) {
 }
 
 export function getDecisionContext(config) {
+  if (config.preparedContext) return Promise.resolve(config.preparedContext)
   return bridge(config, ['context', ...modeArgs(config), '--execution-mode', config.executionMode ?? 'human'])
+}
+
+// The five-minute Python tick owns observation and trigger detection.  Returning
+// its already-persisted context prevents a second moving-market observation from
+// being sent to the model or invalidating the subsequent submit.
+export function monitorHeartbeat(config) {
+  return bridge(config, ['monitor', ...modeArgs(config), ...(config.forceMarket ? ['--force-market'] : [])])
+}
+
+export function recordHeartbeatEvent(config, { kind, failureCode } = {}) {
+  if (!kind) throw new Error('heartbeat event kind is required')
+  return bridge(config, ['heartbeat-event', '--kind', kind, ...(failureCode ? ['--failure-code', failureCode] : [])])
 }
 
 // The model never receives the idempotency key.  It is a harness-owned value,

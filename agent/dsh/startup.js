@@ -18,7 +18,7 @@ function command() {
     .option('--mock', 'observe the explicit local mock source (never live)', false)
     .option('--live', 'observe the live Alpaca paper account instead of a fixture', false)
     .option('--heartbeat', 'run continuously on an interval instead of one shot', false)
-    .option('--interval <ms>', 'heartbeat interval in milliseconds', String(1_800_000))
+    .option('--interval <ms>', 'heartbeat observation interval in milliseconds', String(300_000))
     .option('--place', 'deprecated; autonomous placement is controlled by PAPER_EXECUTION_MODE', false)
     .option('--ledger <path>', 'canonical proposal JSONL ledger', '.agent/decisions.jsonl')
     .argument('[instruction...]', 'decision objective')

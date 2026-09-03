@@ -18,6 +18,8 @@
     "startup.js",
     "decision-bridge.js",
     "model-native-adapter.js",
+    "heartbeat-smoke.js",
+    "autonomous-policy.js",
     "alpaca-orders.js",
     "alpaca-readonly.js",
     "cordis.patch.yml"

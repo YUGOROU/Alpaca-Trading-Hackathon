@@ -41,16 +41,20 @@ class DecisionCandidate:
     tradeoffs: CandidateTradeoffs
     hedge_symbol: str
     plan: StrategyPlan
+    selection: dict[str, Any] | None = None
 
     def to_model_dict(self) -> dict[str, Any]:
-        """Exclude exact orders and contract counts from the model-visible view."""
-        return {
+        """Expose only gate-built candidate choices, never free-form orders."""
+        result = {
             "candidate_id": self.candidate_id,
             "action": self.action,
             "label": self.label,
             "thesis": self.thesis,
             "tradeoffs": self.tradeoffs.to_dict(),
         }
+        if self.selection is not None:
+            result["selection"] = self.selection
+        return result
 
 
 @dataclass(frozen=True)

@@ -8,12 +8,26 @@ import json
 from math import floor
 
 from risk_engine import IncomePlan, MarketData, Portfolio, StrategyPlan, assess, plan_hedge, plan_income
+from risk_engine.income import IncomeLeg
 from risk_engine.payoffs import stress_pnl
 
 from .contracts import CandidateTradeoffs, DecisionCandidate, DecisionContext
-from .limits import MAX_HEDGE_COST_DRAG
+from .limits import MAX_DEFINED_RISK_FRACTION, MAX_HEDGE_COST_DRAG
 
-AUTONOMOUS_COVERED_CALL_SYMBOLS = ("AAPL", "MSFT", "NVDA", "DELL")
+# This is deliberately a fixed, reviewable universe -- never a model supplied
+# symbol.  All names are US large-cap stocks or broad/sector ETFs with listed
+# options.  Adding a name is a code review/deploy decision, not a prompt change.
+AUTONOMOUS_OPTION_UNDERLYINGS = (
+    "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLV", "SMH",
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AMD", "TSLA",
+)
+AUTONOMOUS_COVERED_CALL_SYMBOLS = AUTONOMOUS_OPTION_UNDERLYINGS
+# The deployed paper overlay can be intentionally more responsive than the
+# human-review profile, but its total protection is still capped at three quarters of the
+# beta-weighted book.  This is a position target, not a daily order quota: the
+# planner subtracts existing verified protective-put contracts before emitting
+# another single-leg order.
+AUTONOMOUS_AGGRESSIVE_HEDGE_COVERAGE = 0.75
 
 def _empty_income() -> IncomePlan:
     return IncomePlan(
@@ -27,38 +41,170 @@ def _empty_income() -> IncomePlan:
     )
 
 
-def _single_leg_income(income: IncomePlan, *, index_symbol: str, equity: float) -> IncomePlan:
-    """Keep the autonomous income surface to exactly one approved overlay.
+def _preserved_hedge(
+    portfolio: Portfolio,
+    market: MarketData,
+    snapshot,
+    *,
+    current_contracts: int,
+    expiry_days: int,
+):
+    """Keep verified protective puts out of an income-opening candidate.
 
-    A named covered call is eligible only when ``plan_income`` found at least
-    100 held shares. The live revalidation then requires positions to remain
-    unchanged before submission. Otherwise retain the single index condor.
+    An autonomous candidate is limited to one opening order.  Planning income
+    against a zero-coverage snapshot would otherwise turn existing protective
+    puts into an implicit ``sell_to_close`` order, producing a two-order
+    candidate (and, before close execution is armed, a rejected one).  The
+    existing hedge is instead represented as held inventory with no adjustment.
     """
-    leg = next((
-        item for symbol in AUTONOMOUS_COVERED_CALL_SYMBOLS
-        for item in income.legs
-        if item.kind == "covered_call" and item.symbol == symbol
-    ), None)
-    if leg is None:
-        leg = next((
-            item for item in income.legs
-            if item.kind == "iron_condor" and item.symbol == index_symbol
-        ), None)
-    if leg is None:
-        return _empty_income()
+    hold_snapshot = replace(snapshot, target_coverage=0.0)
+    hedge = plan_hedge(
+        portfolio, market, hold_snapshot, current_contracts=current_contracts,
+        expiry_days=expiry_days,
+    )
+    if current_contracts <= 0:
+        return hedge
+    return replace(
+        hedge,
+        action="hold",
+        target_coverage=hedge.current_coverage,
+        contracts_target=current_contracts,
+        contracts_delta=0,
+    )
+
+
+def _one_leg_income(leg: IncomeLeg, *, equity: float, aggressiveness: float) -> IncomePlan:
+    """Return one executable option structure, never a portfolio-sized batch."""
     annualized_yield = (
         (leg.credit / equity) * (365.0 / leg.expiry_days)
         if equity and leg.expiry_days else 0.0
     )
     return IncomePlan(
-        legs=[leg],
-        total_credit=leg.credit,
-        total_max_loss=leg.max_loss,
-        capital_reserved=leg.capital_reserved,
-        net_theta_per_day=leg.theta_per_day,
-        aggressiveness=income.aggressiveness,
-        annualized_yield=annualized_yield,
+        legs=[leg], total_credit=leg.credit, total_max_loss=leg.max_loss,
+        capital_reserved=leg.capital_reserved, net_theta_per_day=leg.theta_per_day,
+        aggressiveness=aggressiveness, annualized_yield=annualized_yield,
     )
+
+
+def _scaled_leg(leg: IncomeLeg, contracts: int) -> IncomeLeg:
+    """Scale a pre-admissible leg without changing its strikes or risk geometry."""
+    if contracts <= 0:
+        raise ValueError("contracts must be positive")
+    ratio = contracts / leg.contracts
+    return replace(
+        leg,
+        contracts=contracts,
+        credit=leg.credit * ratio,
+        max_loss=leg.max_loss * ratio,
+        capital_reserved=leg.capital_reserved * ratio,
+        theta_per_day=leg.theta_per_day * ratio,
+    )
+
+
+def _directional_spreads(condor: IncomeLeg, *, equity: float) -> tuple[IncomeLeg, IncomeLeg]:
+    """Split a defined-risk condor into conservative bullish/bearish alternatives.
+
+    Risk is deliberately budgeted at the full spread width (ignoring received
+    credit), so the candidate cannot rely on theoretical credit to pass the cap.
+    """
+    if condor.kind != "iron_condor" or condor.long_strike is None or condor.call_short_strike is None or condor.call_long_strike is None:
+        raise ValueError("directional spreads require a complete iron condor")
+    candidates = []
+    for kind, short, long in (
+        ("bull_put_spread", condor.short_strike, condor.long_strike),
+        ("bear_call_spread", condor.call_short_strike, condor.call_long_strike),
+    ):
+        width = abs(float(short) - float(long))
+        max_contracts = int(floor((equity * MAX_DEFINED_RISK_FRACTION) / (width * 100.0)))
+        contracts = min(condor.contracts, max_contracts)
+        if contracts <= 0:
+            continue
+        ratio = contracts / condor.contracts
+        candidates.append(IncomeLeg(
+            kind=kind, symbol=condor.symbol, short_strike=float(short), long_strike=float(long),
+            expiry_days=condor.expiry_days, short_delta=condor.short_delta, contracts=contracts,
+            credit=max(0.0, condor.credit * 0.5 * ratio),
+            max_loss=width * 100.0 * contracts,
+            capital_reserved=width * 100.0 * contracts,
+            theta_per_day=condor.theta_per_day * 0.5 * ratio,
+            note="defined-risk directional credit spread; risk budget ignores theoretical credit",
+        ))
+    return tuple(candidates)
+
+
+def _autonomous_income_candidates(
+    *, portfolio: Portfolio, snapshot, market: MarketData,
+    income_markets: dict[str, MarketData] | None,
+    current_contracts: int, expiry_days: int,
+) -> list[tuple[str, str, str, StrategyPlan]]:
+    """Generate bounded one-order choices across the reviewed option universe.
+
+    The model chooses an already-sized candidate (including conservative/standard
+    size variants); it never sends a symbol, strike, direction, or quantity to the
+    broker.  Each candidate remains subject to the final defined-risk gate and
+    fresh executable-price checks.
+    """
+    markets = {market.index_symbol: market}
+    markets.update(income_markets or {})
+    choices: list[tuple[str, str, str, StrategyPlan]] = []
+    seen: set[tuple[str, str, int]] = set()
+
+    # Covered calls are permitted only where the live portfolio already supplies
+    # the 100-share coverage; plan_income computes that capacity.
+    covered = plan_income(portfolio, market, snapshot, expiry_days=expiry_days)
+    source_legs = [
+        leg for leg in covered.legs
+        if leg.kind == "covered_call" and leg.symbol in AUTONOMOUS_COVERED_CALL_SYMBOLS
+    ]
+    preferred_covered = source_legs[0] if source_legs else None
+
+    # A defined-risk condor may be proposed for every whitelist member whose
+    # current bars/spot/IV were successfully observed.
+    empty_portfolio = Portfolio(positions=[], cash=portfolio.equity, peak_equity=portfolio.equity)
+    for symbol in AUTONOMOUS_OPTION_UNDERLYINGS:
+        option_market = markets.get(symbol)
+        if option_market is None:
+            continue
+        income = plan_income(empty_portfolio, option_market, snapshot, expiry_days=expiry_days)
+        source_legs.extend(
+            leg for leg in income.legs
+            if leg.kind == "iron_condor" and leg.symbol == symbol
+        )
+        for condor in [leg for leg in income.legs if leg.kind == "iron_condor" and leg.symbol == symbol]:
+            source_legs.extend(_directional_spreads(condor, equity=portfolio.equity))
+
+    for leg in source_legs:
+        # Give the agent a real sizing choice while retaining a bounded,
+        # deterministic order.  Duplicated one-contract variants are omitted.
+        for fraction, label in ((1.0, "standard"), (0.5, "conservative")):
+            contracts = max(1, int(floor(leg.contracts * fraction)))
+            key = (leg.kind, leg.symbol, contracts)
+            if key in seen:
+                continue
+            seen.add(key)
+            sized = _scaled_leg(leg, contracts)
+            income = _one_leg_income(sized, equity=portfolio.equity, aggressiveness=covered.aggressiveness)
+            hedge = _preserved_hedge(
+                portfolio, market, snapshot,
+                current_contracts=current_contracts, expiry_days=expiry_days,
+            )
+            plan = _strategy("HARVEST", income, hedge)
+            candidate_id = "harvest_income" if label == "standard" and (
+                leg == preferred_covered or (
+                    preferred_covered is None
+                    and leg.kind == "iron_condor"
+                    and leg.symbol == market.index_symbol
+                )
+            ) else (
+                f"harvest_{leg.symbol.lower()}_{leg.kind}_{label}"
+            )
+            choices.append((
+                candidate_id,
+                f"Open {label} {leg.kind.replace('_', ' ')} on {leg.symbol}",
+                f"Use the {label} risk-budget allocation for a defined one-order {leg.kind} on {leg.symbol}.",
+                plan,
+            ))
+    return choices
 
 
 def _strategy(posture: str, income: IncomePlan, hedge) -> StrategyPlan:
@@ -88,6 +234,27 @@ def _candidate(
         hedge_contracts=plan.hedge.contracts_target,
         put_delta=plan.hedge.put_delta,
     )
+    selection = None
+    if len(plan.income.legs) == 1:
+        leg = plan.income.legs[0]
+        selection = {
+            "underlying": leg.symbol,
+            "strategy": leg.kind,
+            "direction": {
+                "iron_condor": "neutral",
+                "covered_call": "short_call_covered",
+                "bull_put_spread": "bullish",
+                "bear_call_spread": "bearish",
+            }.get(leg.kind, "bounded"),
+            "contracts": leg.contracts,
+        }
+    elif plan.hedge.contracts_delta > 0:
+        selection = {
+            "underlying": market.index_symbol,
+            "strategy": "protective_put",
+            "direction": "bearish_protection",
+            "contracts": plan.hedge.contracts_delta,
+        }
     return DecisionCandidate(
         candidate_id=candidate_id,
         action=action,
@@ -103,16 +270,24 @@ def _candidate(
         ),
         hedge_symbol=market.index_symbol,
         plan=plan,
+        selection=selection,
     )
 
 
-def _context_id(scenario_id: str, snapshot, candidate_ids: list[str], execution_mode: str) -> str:
+def _context_id(
+    scenario_id: str, snapshot, candidate_ids: list[str], execution_mode: str,
+    income_markets: dict[str, MarketData] | None = None,
+) -> str:
     payload = json.dumps(
         {
             "scenario_id": scenario_id,
             "snapshot": asdict(snapshot),
             "candidate_ids": candidate_ids,
             "execution_mode": execution_mode,
+            "income_markets": {
+                symbol: asdict(option_market)
+                for symbol, option_market in sorted((income_markets or {}).items())
+            },
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -130,6 +305,7 @@ def build_decision_context(
     expiry_days: int = 4,
     input_provenance: dict | None = None,
     execution_mode: str = "human",
+    income_markets: dict[str, MarketData] | None = None,
 ) -> DecisionContext:
     """Create only choices that pass the coarse deterministic risk envelope.
 
@@ -168,10 +344,21 @@ def build_decision_context(
     if snapshot.risk_score < 40.0 and not income_open:
         income = plan_income(portfolio, market, snapshot, expiry_days=expiry_days)
         if execution_mode == "autonomous-paper":
-            income = _single_leg_income(
-                income, index_symbol=market.index_symbol, equity=portfolio.equity,
-            )
-        if income.legs:
+            for candidate_id, label, thesis, income_plan in _autonomous_income_candidates(
+                portfolio=portfolio, snapshot=snapshot, market=market,
+                income_markets=income_markets, current_contracts=current_contracts,
+                expiry_days=expiry_days,
+            ):
+                candidates.append(_candidate(
+                    candidate_id,
+                    "add_income_overlay",
+                    label,
+                    thesis,
+                    income_plan,
+                    snapshot,
+                    market,
+                ))
+        elif income.legs:
             income_snapshot = replace(snapshot, target_coverage=0.0)
             income_hedge = plan_hedge(
                 portfolio,
@@ -192,7 +379,11 @@ def build_decision_context(
             ))
 
     if snapshot.risk_score >= 25.0:
-        partial_coverage = min(0.50, max(0.25, snapshot.target_coverage))
+        partial_coverage = (
+            AUTONOMOUS_AGGRESSIVE_HEDGE_COVERAGE
+            if execution_mode == "autonomous-paper"
+            else min(0.50, max(0.25, snapshot.target_coverage))
+        )
         partial_snapshot = replace(snapshot, target_coverage=partial_coverage)
         partial_hedge = plan_hedge(
             portfolio,
@@ -202,15 +393,19 @@ def build_decision_context(
             expiry_days=expiry_days,
         )
         partial_plan = _strategy("PARTIAL DEFEND", _empty_income(), partial_hedge)
-        candidates.append(_candidate(
-            "partial_hedge",
-            "add_hedge",
-            "Add partial protection",
-            "Reduce tail exposure while limiting premium drag.",
-            partial_plan,
-            snapshot,
-            market,
-        ))
+        # Do not ask the autonomous model to select an add-hedge candidate
+        # which cannot place an order.  Human review retains its full planning
+        # view, including an already-satisfied target.
+        if execution_mode == "human" or partial_hedge.contracts_delta != 0:
+            candidates.append(_candidate(
+                "partial_hedge",
+                "add_hedge",
+                "Add partial protection",
+                "Reduce tail exposure while limiting premium drag.",
+                partial_plan,
+                snapshot,
+                market,
+            ))
 
     if snapshot.risk_score >= 40.0:
         full_coverage = max(0.50, snapshot.target_coverage)
@@ -246,7 +441,10 @@ def build_decision_context(
             label = "Defend up to the hedge-cost cap"
             thesis = "Maximize protection without breaching the deterministic premium budget."
         full_plan = _strategy("DEFEND", _empty_income(), full_hedge)
-        if full_hedge.contracts_target > partial_hedge.contracts_target:
+        if (
+            full_hedge.contracts_target > partial_hedge.contracts_target
+            and (execution_mode == "human" or full_hedge.contracts_delta != 0)
+        ):
             candidates.append(_candidate(
                 candidate_id,
                 "add_hedge",
@@ -264,7 +462,9 @@ def build_decision_context(
     # A live context must bind the provenance timestamps as well as the risk
     # snapshot.  Rebuilding from the persisted inputs therefore retains the
     # same ID, while a newly observed snapshot gets a distinct decision ID.
-    context_id = _context_id(scenario_id, snapshot, ids, execution_mode)
+    context_id = _context_id(
+        scenario_id, snapshot, ids, execution_mode, income_markets=income_markets,
+    )
     if input_provenance is not None:
         provenance_bytes = json.dumps(input_provenance, sort_keys=True, separators=(",", ":"))
         context_id = sha256(f"{context_id}:{provenance_bytes}".encode()).hexdigest()[:20]

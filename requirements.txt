@@ -4,6 +4,10 @@ python-dotenv
 # Alpaca market data + paper trading (feed/alpaca.py)
 alpaca-py
 
+# Provides ``uvx`` for the pinned official Alpaca MCP stdio child used by the
+# paper-order executor. Keep it explicit: the base Node image has no uv binary.
+uv==0.12.9
+
 # NOTE: langchain / langgraph removed — the model brain and MCP connection live in the
 # DSH harness now, not in this repo. The retired langchain LLM client (model/) and MCP
 # executor (harness/mcp_executor.py) are preserved under _archive/ if ever needed.
